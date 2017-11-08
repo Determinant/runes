@@ -146,112 +146,111 @@ pub mod disasm {
     }
 }
 
-    mod ops {
-        use mos6502::CPU;
-        make_optable!(OPS, fn (&mut CPU));
-    
-        fn adc(cpu: &mut CPU) {}
-        fn and(cpu: &mut CPU) {}
-        fn asl(cpu: &mut CPU) {}
-        fn bcc(cpu: &mut CPU) {}
-        fn bcs(cpu: &mut CPU) {}
-        fn beq(cpu: &mut CPU) {}
-        fn bit(cpu: &mut CPU) {}
-        fn bmi(cpu: &mut CPU) {}
-        fn bne(cpu: &mut CPU) {}
-        fn bpl(cpu: &mut CPU) {}
-        fn brk(cpu: &mut CPU) {}
-        fn bvc(cpu: &mut CPU) {}
-        fn bvs(cpu: &mut CPU) {}
-        fn clc(cpu: &mut CPU) {}
-        fn cld(cpu: &mut CPU) {}
-        fn cli(cpu: &mut CPU) {}
-        fn clv(cpu: &mut CPU) {}
-        fn cmp(cpu: &mut CPU) {}
-        fn cpx(cpu: &mut CPU) {}
-        fn cpy(cpu: &mut CPU) {}
-        fn dec(cpu: &mut CPU) {}
-        fn dex(cpu: &mut CPU) {}
-        fn dey(cpu: &mut CPU) {}
-        fn eor(cpu: &mut CPU) {}
-        fn inc(cpu: &mut CPU) {}
-        fn inx(cpu: &mut CPU) {}
-        fn iny(cpu: &mut CPU) {}
-        fn jmp(cpu: &mut CPU) {}
-        fn jsr(cpu: &mut CPU) {}
-        fn lda(cpu: &mut CPU) {}
-        fn ldx(cpu: &mut CPU) {}
-        fn ldy(cpu: &mut CPU) {}
-        fn lsr(cpu: &mut CPU) {}
-        fn nop(cpu: &mut CPU) {}
-        fn ora(cpu: &mut CPU) {}
-        fn pha(cpu: &mut CPU) {}
-        fn php(cpu: &mut CPU) {}
-        fn pla(cpu: &mut CPU) {}
-        fn plp(cpu: &mut CPU) {}
-        fn rol(cpu: &mut CPU) {}
-        fn ror(cpu: &mut CPU) {}
-        fn rti(cpu: &mut CPU) {}
-        fn rts(cpu: &mut CPU) {}
-        fn sbc(cpu: &mut CPU) {}
-        fn sec(cpu: &mut CPU) {}
-        fn sed(cpu: &mut CPU) {}
-        fn sei(cpu: &mut CPU) {}
-        fn sta(cpu: &mut CPU) {}
-        fn stx(cpu: &mut CPU) {}
-        fn sty(cpu: &mut CPU) {}
-        fn tax(cpu: &mut CPU) {}
-        fn tay(cpu: &mut CPU) {}
-        fn tsx(cpu: &mut CPU) {}
-        fn txa(cpu: &mut CPU) {}
-        fn txs(cpu: &mut CPU) {}
-        fn tya(cpu: &mut CPU) {}
-        fn nil(cpu: &mut CPU) {}
-    }
-    
-    mod addr {
-        use mos6502::CPU;
-        make_addrtable!(ADDR_MODES, fn (&mut CPU));
-    
-        fn acc(cpu: &mut CPU) {}
-        fn imm(cpu: &mut CPU) {}
-        fn zpg(cpu: &mut CPU) {}
-        fn zpx(cpu: &mut CPU) {}
-        fn zpy(cpu: &mut CPU) {}
-        fn rel(cpu: &mut CPU) {}
-        fn abs(cpu: &mut CPU) {}
-        fn abx(cpu: &mut CPU) {}
-        fn aby(cpu: &mut CPU) {}
-        fn ind(cpu: &mut CPU) {}
-        fn xin(cpu: &mut CPU) {}
-        fn iny(cpu: &mut CPU) {}
-        fn nil(cpu: &mut CPU) {}
-    }
-    
-    pub trait VMem {
-        fn read(addr: u16) -> u8;
-        fn write(addr: u16, data: u8);
-    }
-    
-    pub struct CPU {
-        /* registers */
-        a: u8,
-        x: u8,
-        y: u8,
-        status: u8,
-        pc: u8,
-        sp: u8,
-        /* internal state */
-        ea: u16,    /* effective address */
-    }
-    
-    impl CPU {
-        fn step(&mut self, opcode: u8) {
-            ops::OPS[opcode as usize](self);
-            addr::ADDR_MODES[opcode as usize](self);
-        }
-        fn new() -> Self {
-            CPU{a: 0, x: 0, y: 0, status: 0, pc: 0, sp: 0, ea: 0}
-        }
-    }
+mod ops {
+    use mos6502::CPU;
+    make_optable!(OPS, fn (&mut CPU));
 
+    fn adc(cpu: &mut CPU) {}
+    fn and(cpu: &mut CPU) {}
+    fn asl(cpu: &mut CPU) {}
+    fn bcc(cpu: &mut CPU) {}
+    fn bcs(cpu: &mut CPU) {}
+    fn beq(cpu: &mut CPU) {}
+    fn bit(cpu: &mut CPU) {}
+    fn bmi(cpu: &mut CPU) {}
+    fn bne(cpu: &mut CPU) {}
+    fn bpl(cpu: &mut CPU) {}
+    fn brk(cpu: &mut CPU) {}
+    fn bvc(cpu: &mut CPU) {}
+    fn bvs(cpu: &mut CPU) {}
+    fn clc(cpu: &mut CPU) {}
+    fn cld(cpu: &mut CPU) {}
+    fn cli(cpu: &mut CPU) {}
+    fn clv(cpu: &mut CPU) {}
+    fn cmp(cpu: &mut CPU) {}
+    fn cpx(cpu: &mut CPU) {}
+    fn cpy(cpu: &mut CPU) {}
+    fn dec(cpu: &mut CPU) {}
+    fn dex(cpu: &mut CPU) {}
+    fn dey(cpu: &mut CPU) {}
+    fn eor(cpu: &mut CPU) {}
+    fn inc(cpu: &mut CPU) {}
+    fn inx(cpu: &mut CPU) {}
+    fn iny(cpu: &mut CPU) {}
+    fn jmp(cpu: &mut CPU) {}
+    fn jsr(cpu: &mut CPU) {}
+    fn lda(cpu: &mut CPU) {}
+    fn ldx(cpu: &mut CPU) {}
+    fn ldy(cpu: &mut CPU) {}
+    fn lsr(cpu: &mut CPU) {}
+    fn nop(cpu: &mut CPU) {}
+    fn ora(cpu: &mut CPU) {}
+    fn pha(cpu: &mut CPU) {}
+    fn php(cpu: &mut CPU) {}
+    fn pla(cpu: &mut CPU) {}
+    fn plp(cpu: &mut CPU) {}
+    fn rol(cpu: &mut CPU) {}
+    fn ror(cpu: &mut CPU) {}
+    fn rti(cpu: &mut CPU) {}
+    fn rts(cpu: &mut CPU) {}
+    fn sbc(cpu: &mut CPU) {}
+    fn sec(cpu: &mut CPU) {}
+    fn sed(cpu: &mut CPU) {}
+    fn sei(cpu: &mut CPU) {}
+    fn sta(cpu: &mut CPU) {}
+    fn stx(cpu: &mut CPU) {}
+    fn sty(cpu: &mut CPU) {}
+    fn tax(cpu: &mut CPU) {}
+    fn tay(cpu: &mut CPU) {}
+    fn tsx(cpu: &mut CPU) {}
+    fn txa(cpu: &mut CPU) {}
+    fn txs(cpu: &mut CPU) {}
+    fn tya(cpu: &mut CPU) {}
+    fn nil(cpu: &mut CPU) {}
+}
+
+mod addr {
+    use mos6502::CPU;
+    make_addrtable!(ADDR_MODES, fn (&mut CPU));
+
+    fn acc(cpu: &mut CPU) {}
+    fn imm(cpu: &mut CPU) {}
+    fn zpg(cpu: &mut CPU) {}
+    fn zpx(cpu: &mut CPU) {}
+    fn zpy(cpu: &mut CPU) {}
+    fn rel(cpu: &mut CPU) {}
+    fn abs(cpu: &mut CPU) {}
+    fn abx(cpu: &mut CPU) {}
+    fn aby(cpu: &mut CPU) {}
+    fn ind(cpu: &mut CPU) {}
+    fn xin(cpu: &mut CPU) {}
+    fn iny(cpu: &mut CPU) {}
+    fn nil(cpu: &mut CPU) {}
+}
+
+pub trait VMem {
+    fn read(addr: u16) -> u8;
+    fn write(addr: u16, data: u8);
+}
+
+pub struct CPU {
+    /* registers */
+    a: u8,
+    x: u8,
+    y: u8,
+    status: u8,
+    pc: u8,
+    sp: u8,
+    /* internal state */
+    ea: u16,    /* effective address */
+}
+
+impl CPU {
+    fn step(&mut self, opcode: u8) {
+        ops::OPS[opcode as usize](self);
+        addr::ADDR_MODES[opcode as usize](self);
+    }
+    fn new() -> Self {
+        CPU{a: 0, x: 0, y: 0, status: 0, pc: 0, sp: 0, ea: 0}
+    }
+}
