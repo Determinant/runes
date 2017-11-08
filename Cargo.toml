@@ -1,0 +1,6 @@
+[package]
+name = "runes"
+version = "0.1.0"
+authors = ["Determinant <ted.sybil@gmail.com>"]
+
+[dependencies]
