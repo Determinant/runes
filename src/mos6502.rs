@@ -42,6 +42,44 @@ macro_rules! make_addrtable {
     ];);
 }
 
+const INST_LENGTH: [u8; 0x100] =  [
+    0, 2, 0, 0, 0, 2, 2, 0, 0, 2, 1, 0, 0, 3, 3, 0,
+    2, 2, 0, 0, 0, 2, 2, 0, 0, 3, 0, 0, 0, 3, 3, 0,
+    3, 2, 0, 0, 2, 2, 2, 0, 0, 2, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 0, 2, 2, 0, 0, 3, 0, 0, 0, 3, 3, 0,
+    0, 2, 0, 0, 0, 2, 2, 0, 0, 2, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 0, 2, 2, 0, 0, 3, 0, 0, 0, 3, 3, 0,
+    0, 2, 0, 0, 0, 2, 2, 0, 0, 2, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 0, 2, 2, 0, 0, 3, 0, 0, 0, 3, 3, 0,
+    0, 2, 0, 0, 2, 2, 2, 0, 0, 0, 0, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 0, 3, 0, 0, 0, 3, 0, 0,
+    2, 2, 2, 0, 2, 2, 2, 0, 0, 2, 0, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 0, 3, 0, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 0, 2, 0, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 0, 2, 2, 0, 0, 3, 0, 0, 0, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 0, 2, 0, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 0, 2, 2, 0, 0, 3, 0, 0, 0, 3, 3, 0,
+];
+
+const INST_CYCLE: [u8; 0x100] = [
+    0, 6, 0, 0, 0, 3, 5, 0, 0, 2, 2, 0, 0, 4, 6, 0,
+    2, 5, 0, 0, 0, 4, 6, 0, 0, 4, 0, 0, 0, 4, 7, 0,
+    6, 6, 0, 0, 3, 3, 5, 0, 0, 2, 2, 0, 4, 4, 6, 0,
+    2, 5, 0, 0, 0, 4, 6, 0, 0, 4, 0, 0, 0, 4, 7, 0,
+    0, 6, 0, 0, 0, 3, 5, 0, 0, 2, 2, 0, 3, 4, 6, 0,
+    2, 5, 0, 0, 0, 4, 6, 0, 0, 4, 0, 0, 0, 4, 7, 0,
+    0, 6, 0, 0, 0, 3, 5, 0, 0, 2, 2, 0, 5, 4, 6, 0,
+    2, 5, 0, 0, 0, 4, 6, 0, 0, 4, 0, 0, 0, 4, 7, 0,
+    0, 6, 0, 0, 3, 3, 3, 0, 0, 0, 0, 0, 4, 4, 4, 0,
+    2, 6, 0, 0, 4, 4, 4, 0, 0, 5, 0, 0, 0, 5, 0, 0,
+    2, 6, 2, 0, 3, 3, 3, 0, 0, 2, 0, 0, 4, 4, 4, 0,
+    2, 5, 0, 0, 4, 4, 4, 0, 0, 4, 0, 0, 4, 4, 4, 0,
+    2, 6, 0, 0, 3, 3, 5, 0, 0, 2, 0, 0, 4, 4, 6, 0,
+    2, 5, 0, 0, 0, 4, 6, 0, 0, 4, 0, 0, 0, 4, 7, 0,
+    2, 6, 0, 0, 3, 3, 5, 0, 0, 2, 0, 0, 4, 4, 6, 0,
+    2, 5, 0, 0, 0, 4, 6, 0, 0, 4, 0, 0, 0, 4, 7, 0,
+];
+
 macro_rules! ids2strs {
     ($($x:ident), *) => {
         $(#[allow(non_upper_case_globals)]
@@ -175,6 +213,8 @@ mod ops {
         ($st: ident, $r: expr) => ($st |= ($r as u8 & NEG_FLAG) as u8);
     }
 
+    /* arithmetic */
+
     fn adc(cpu: &mut CPU) {
         let opr1 = cpu.a as u16;
         let opr2 = match cpu.addr_mode {
@@ -212,6 +252,57 @@ mod ops {
         cpu.status = status;
     }
     
+    macro_rules! make_cmp {
+        ($f: ident, $r: ident) => (fn $f(cpu: &mut CPU) {
+            let opr1 = cpu.$r as u16;
+            let opr2 = match cpu.addr_mode {
+                        AddrMode::Immediate => cpu.imm_val,
+                        _ => cpu.mem.read(cpu.ea)
+                        } as u16;
+            let res = opr1 - opr2;
+            let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
+            status |= (res < 0x100) as u8; /* carry flag */
+            check_zero!(status, res);
+            check_neg!(status, res);
+            cpu.status = status;
+        });
+    }
+
+    make_cmp!(cmp, a);
+    make_cmp!(cpx, x);
+    make_cmp!(cpy, y);
+
+    /* increments & decrements */
+    macro_rules! make_delta {
+        ($f: ident, $d: expr) => (
+            fn $f(cpu: &mut CPU) {
+                let res = cpu.mem.read(cpu.ea) as u16 + $d;
+                let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
+                cpu.mem.write(cpu.ea, res as u8);
+                check_zero!(status, res);
+                check_neg!(status, res);
+                cpu.status = status;
+            });
+        ($f: ident, $d: expr, $r: ident) => (
+            fn $f(cpu: &mut CPU) {
+                let res = cpu.$r as u16 + $d;
+                let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
+                cpu.$r = res as u8;
+                check_zero!(status, res);
+                check_neg!(status, res);
+                cpu.status = status;
+            });
+
+    }
+
+    make_delta!(dec, 0xff);
+    make_delta!(dex, 0xff, x);
+    make_delta!(dey, 0xff, y);
+    make_delta!(inc, 0x01);
+    make_delta!(inx, 0x01, x);
+    make_delta!(iny, 0x01, y);
+
+    /* logical */
     macro_rules! make_logic {
         ($f: ident, $op: tt) => (
         fn $f(cpu: &mut CPU) {
@@ -231,6 +322,15 @@ mod ops {
     make_logic!(eor, ^);
     make_logic!(ora, |);
 
+    fn bit(cpu: &mut CPU) {
+        let m = cpu.mem.read(cpu.ea);
+        let mut status = cpu.status & !(ZERO_FLAG | OVER_FLAG | NEG_FLAG);
+        check_zero!(status, (m & cpu.a));
+        status |= ((m >> 6) & 0x3) << 6; /* copy bit 6 & 7 */
+        cpu.status = status;
+    }
+
+    /* shifts */
     fn asl(cpu: &mut CPU) {
         let res = match cpu.addr_mode {
                     AddrMode::Accumulator => {
@@ -244,7 +344,7 @@ mod ops {
                         t
                     }};
         let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
-        status |= (res > 0xff) as u8; /* carry flag */
+        status |= (res >> 8) as u8; /* carry flag */
         check_zero!(status, res);
         check_neg!(status, res);
         cpu.status = status;
@@ -316,20 +416,13 @@ mod ops {
         cpu.status = status;
     }
 
-    fn bit(cpu: &mut CPU) {
-        let m = cpu.mem.read(cpu.ea);
-        let mut status = cpu.status & !(ZERO_FLAG | OVER_FLAG | NEG_FLAG);
-        check_zero!(status, (m & cpu.a));
-        status |= ((m >> 6) & 0x3) << 6; /* copy bit 6 & 7 */
-        cpu.status = status;
-    }
-
+    /* branches */
     macro_rules! make_branch_clear {
         ($f: ident, $e: ident) => (fn $f(cpu: &mut CPU) {
             match cpu.$e() {
                 0 => {
-                    cpu.pc = (cpu.pc as i32 + cpu.ea as i32) as u16;
-                    cpu.cycle.wrapping_add(1);
+                    cpu.pc = cpu.ea;
+                    cpu.cycle += 1;
                 },
                 _ => ()
             }});
@@ -340,8 +433,8 @@ mod ops {
             match cpu.$e() {
                 0 => (),
                 _ => {
-                    cpu.pc = (cpu.pc as i32 + cpu.ea as i32) as u16;
-                    cpu.cycle.wrapping_add(1);
+                    cpu.pc = cpu.ea;
+                    cpu.cycle += 1;
                 }
             }});
     }
@@ -360,16 +453,17 @@ mod ops {
     }
 
     fn brk(cpu: &mut CPU) {
-        let npc = cpu.pc.wrapping_add(2);
+        let pc = cpu.pc;
         let sp = cpu.sp;
-        cpu.mem.write(stack_addr!(sp, 0), (npc >> 8) as u8); /* push high pc */
-        cpu.mem.write(stack_addr!(sp, 1), npc as u8); /* push low pc */
+        cpu.mem.write(stack_addr!(sp, 0), (pc >> 8) as u8); /* push high pc */
+        cpu.mem.write(stack_addr!(sp, 1), pc as u8); /* push low pc */
         cpu.status |= BRK_FLAG;
         cpu.mem.write(stack_addr!(sp, 2), cpu.status); /* push status */
         cpu.sp = sp.wrapping_sub(3);
         cpu.pc = read16!(cpu.mem, 0xfffe as u16); /* load the interrupt vector */
     }
 
+    /* status flag changes */
     fn clc(cpu: &mut CPU) { cpu.status &= !CARRY_FLAG; }
     fn cld(cpu: &mut CPU) { cpu.status &= !DEC_FLAG; }
     fn cli(cpu: &mut CPU) { cpu.status &= !INT_FLAG; }
@@ -379,56 +473,7 @@ mod ops {
     fn sed(cpu: &mut CPU) { cpu.status |= DEC_FLAG; }
     fn sei(cpu: &mut CPU) { cpu.status |= INT_FLAG; }
 
-
-    macro_rules! make_cmp {
-        ($f: ident, $r: ident) => (fn $f(cpu: &mut CPU) {
-            let opr1 = cpu.$r as u16;
-            let opr2 = match cpu.addr_mode {
-                        AddrMode::Immediate => cpu.imm_val,
-                        _ => cpu.mem.read(cpu.ea)
-                        } as u16;
-            let res = opr1 - opr2;
-            let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
-            status |= (res < 0x100) as u8; /* carry flag */
-            check_zero!(status, res);
-            check_neg!(status, res);
-            cpu.status = status;
-        });
-    }
-
-    make_cmp!(cmp, a);
-    make_cmp!(cpx, x);
-    make_cmp!(cpy, y);
-
-    macro_rules! make_delta {
-        ($f: ident, $d: expr) => (
-            fn $f(cpu: &mut CPU) {
-                let res = cpu.mem.read(cpu.ea) as u16 + $d;
-                let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
-                cpu.mem.write(cpu.ea, res as u8);
-                check_zero!(status, res);
-                check_neg!(status, res);
-                cpu.status = status;
-            });
-        ($f: ident, $d: expr, $r: ident) => (
-            fn $f(cpu: &mut CPU) {
-                let res = cpu.$r as u16 + $d;
-                let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
-                cpu.$r = res as u8;
-                check_zero!(status, res);
-                check_neg!(status, res);
-                cpu.status = status;
-            });
-
-    }
-
-    make_delta!(dec, 0xff);
-    make_delta!(dex, 0xff, x);
-    make_delta!(dey, 0xff, y);
-    make_delta!(inc, 0x01);
-    make_delta!(inx, 0x01, x);
-    make_delta!(iny, 0x01, y);
-
+    /* jumps & calls */
     fn jmp(cpu: &mut CPU) { cpu.pc = cpu.ea; }
 
     fn jsr(cpu: &mut CPU) {
@@ -440,6 +485,25 @@ mod ops {
         cpu.pc = cpu.ea;
     }
 
+    fn rts(cpu: &mut CPU) {
+        let sp = cpu.sp.wrapping_add(2);
+        cpu.pc = make16!(cpu.mem.read(stack_addr!(sp, 0)),
+                        cpu.mem.read(stack_addr!(sp, 1))).wrapping_add(1);
+        cpu.sp = sp;
+    }
+
+    /* system functions */
+    fn rti(cpu: &mut CPU) {
+        let sp = cpu.sp.wrapping_add(3);
+        cpu.status = cpu.mem.read(stack_addr!(sp, 2));
+        cpu.pc = make16!(cpu.mem.read(stack_addr!(sp, 0)),
+                        cpu.mem.read(stack_addr!(sp, 1)));
+        cpu.sp = sp;
+    }
+
+    fn nop(_cpu: &mut CPU) {}
+    
+    /* load/store operations */
     macro_rules! make_ld {
         ($f: ident, $r: ident) => (fn $f(cpu: &mut CPU) {
             let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
@@ -465,6 +529,7 @@ mod ops {
     make_st!(stx, x);
     make_st!(sty, y);
 
+    /* register transfers */
     macro_rules! make_trans {
         ($f: ident, $from: ident, $to: ident) => (fn $f(cpu: &mut CPU) {
             let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
@@ -478,10 +543,12 @@ mod ops {
 
     make_trans!(tax, a, x);
     make_trans!(tay, a, y);
-    make_trans!(tsx, sp, x);
     make_trans!(txa, x, a);
-    make_trans!(txs, x, sp);
     make_trans!(tya, y, a);
+
+    /* stack operations */
+    make_trans!(tsx, sp, x);
+    fn txs(cpu: &mut CPU) { cpu.sp = cpu.x; }
 
     fn pha(cpu: &mut CPU) {
         let sp = cpu.sp;
@@ -512,22 +579,6 @@ mod ops {
         cpu.sp = sp;
     }
 
-    fn rti(cpu: &mut CPU) {
-        let sp = cpu.sp.wrapping_add(3);
-        cpu.status = cpu.mem.read(stack_addr!(sp, 2));
-        cpu.pc = make16!(cpu.mem.read(stack_addr!(sp, 0)),
-                        cpu.mem.read(stack_addr!(sp, 1)));
-        cpu.sp = sp;
-    }
-
-    fn rts(cpu: &mut CPU) {
-        let sp = cpu.sp.wrapping_add(2);
-        cpu.pc = make16!(cpu.mem.read(stack_addr!(sp, 0)),
-                        cpu.mem.read(stack_addr!(sp, 1))).wrapping_add(1);
-        cpu.sp = sp;
-    }
-
-    fn nop(_cpu: &mut CPU) {}
     fn nil(cpu: &mut CPU) {
         panic!("invalid instruction: 0x{:02x}", cpu.mem.read(cpu.pc));
     }
@@ -543,65 +594,77 @@ mod addr {
 
     fn imm(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::Immediate;
-        cpu.imm_val = cpu.mem.read(cpu.pc.wrapping_add(1));
+        cpu.imm_val = cpu.mem.read(cpu.opr);
     }
 
     fn zpg(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
-        cpu.ea = cpu.mem.read(cpu.pc.wrapping_add(1)) as u16;
+        cpu.ea = cpu.mem.read(cpu.opr) as u16;
     }
 
     fn zpx(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
-        cpu.ea = (cpu.mem.read(cpu.pc.wrapping_add(1))
+        cpu.ea = (cpu.mem.read(cpu.opr)
                         .wrapping_add(cpu.x)) as u16;
     }
 
     fn zpy(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
-        cpu.ea = (cpu.mem.read(cpu.pc.wrapping_add(1))
+        cpu.ea = (cpu.mem.read(cpu.opr)
                         .wrapping_add(cpu.y)) as u16;
     }
 
     fn rel(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
-        cpu.ea = cpu.mem.read(cpu.pc.wrapping_add(1)) as u16;
+        let base = cpu.pc;
+        let offset = cpu.mem.read(cpu.opr) as i8 as i16;
+        let sum = (base & 0xff) + offset as u16;
+        cpu.ea = (base & 0xff00).wrapping_add(sum);
+        cpu.cycle += (sum >> 8) as u32;
     }
 
     fn abs(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
-        cpu.ea = read16!(cpu.mem, cpu.pc.wrapping_add(1));
+        cpu.ea = read16!(cpu.mem, cpu.opr);
     }
 
     fn abx(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
-        cpu.ea = read16!(cpu.mem, cpu.pc.wrapping_add(1))
-                                .wrapping_add(cpu.x as u16);
+        let base = read16!(cpu.mem, cpu.opr);
+        let sum = (base & 0xff) + cpu.x as u16;
+        cpu.ea = (base & 0xff00).wrapping_add(sum);
+        cpu.cycle += (sum >> 8) as u32; /* boundary cross if carry */
     }
 
     fn aby(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
-        cpu.ea = read16!(cpu.mem, cpu.pc.wrapping_add(1))
-                                .wrapping_add(cpu.y as u16);
+        let base = read16!(cpu.mem, cpu.opr);
+        let sum = (base & 0xff) + cpu.y as u16;
+        cpu.ea = (base & 0xff00).wrapping_add(sum);
+        cpu.cycle += (sum >> 8) as u32; /* boundary cross if carry */
     }
 
     fn ind(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
-        let addr = read16!(cpu.mem, cpu.pc.wrapping_add(1));
+        let addr = read16!(cpu.mem, cpu.opr);
         cpu.ea = read16!(cpu.mem, addr);
     }
 
     fn xin(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
-        let addr = cpu.mem.read(cpu.mem.read(cpu.pc.wrapping_add(1))
-                                    .wrapping_add(cpu.x) as u16) as u16;
+        let addr = cpu.mem.read(
+                    cpu.mem.read(cpu.opr)
+                        .wrapping_add(cpu.x) as u16) as u16;
         cpu.ea = read16!(cpu.mem, addr);
     }
 
     fn iny(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
-        let addr = cpu.mem.read(cpu.mem.read(cpu.pc.wrapping_add(1)) as u16) as u16;
-        cpu.ea = read16!(cpu.mem, addr).wrapping_add(cpu.y as u16);
+        let addr = cpu.mem.read(cpu.mem.read(cpu.opr) as u16) as u16;
+        let base = read16!(cpu.mem, addr);
+        let sum = (base & 0xff) + cpu.y as u16;
+        cpu.ea = (base & 0xff00).wrapping_add(sum);
+        cpu.cycle += (sum >> 8) as u32; /* boundary cross if carry */
     }
 
     fn nil(_cpu: &mut CPU) {}
@@ -663,6 +726,7 @@ pub struct CPU<'a> {
     sp: u8,
     /* internal state */
     addr_mode: AddrMode,
+    opr: u16,
     ea: u16,    /* effective address */
     imm_val: u8,
     cycle: u32,
@@ -670,18 +734,31 @@ pub struct CPU<'a> {
 }
 
 impl<'a> CPU<'a> {
-    fn step(&mut self, opcode: u8) {
-        ops::OPS[opcode as usize](self);
-        addr::ADDR_MODES[opcode as usize](self);
-    }
     #[inline(always)] pub fn get_carry(&self) -> u8 { (self.status >> 0) & 1 }
     #[inline(always)] pub fn get_zero(&self) -> u8 { (self.status >> 1) & 1 }
     #[inline(always)] pub fn get_over(&self) -> u8 { (self.status >> 6) & 1 }
     #[inline(always)] pub fn get_neg(&self) -> u8 { (self.status >> 7) & 1 }
+
     pub fn new(mem: &'a mut VMem) -> Self {
-        CPU{a: 0, x: 0, y: 0, status: 0, pc: 0, sp: 0, ea: 0, cycle: 0,
+        CPU{a: 0, x: 0, y: 0,
+            pc: 0, sp: 0, status: 0,
+            opr: 0, ea: 0, cycle: 0,
             addr_mode: AddrMode::EffAddr,
             imm_val: 0,
             mem}
+    }
+
+    pub fn step(&mut self) {
+        let pc = self.pc;
+        let opcode = self.mem.read(pc) as usize;
+        /* update opr pointing to operands of current inst */
+        self.opr = pc.wrapping_add(1);
+        /* update program counter pointing to next inst */
+        self.pc = pc.wrapping_add(INST_LENGTH[opcode] as u16);
+        /* get effective address based on addressing mode */
+        addr::ADDR_MODES[opcode](self);
+        /* execute the inst */
+        ops::OPS[opcode](self);
+        self.cycle += INST_CYCLE[opcode] as u32;
     }
 }
