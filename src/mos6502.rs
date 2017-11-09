@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 macro_rules! make_optable {
     ($x:ident, $t: ty) => (pub const $x: [$t; 0x100] = [
     /*  0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf */
@@ -63,7 +64,7 @@ pub mod disasm {
     mod disaddr {
         pub type T<'a, 'b> = &'a mut Iterator<Item=&'b u8>;
         make_addrtable!(ADDR_MODES, fn (T) -> String);
-        fn acc(code: T) -> String {
+        fn acc(_code: T) -> String {
             "a".to_string()
         }
         fn imm(code: T) -> String {
@@ -79,11 +80,11 @@ pub mod disasm {
             format!("${:02x}, y", code.next().unwrap())
         }
         fn rel(code: T) -> String {
-            let b = *code.next().unwrap();
-            if b >> 7 == 0 {
-                format!("+${:02x}, x", b & 0x7f)
+            let b = *code.next().unwrap() as i8;
+            if b >= 0 {
+                format!("+${:02x}, x", b)
             } else {
-                format!("-${:02x}, x", b & 0x7f)
+                format!("-${:02x}, x", -b)
             }
         }
         fn abs(code: T) -> String {
@@ -112,7 +113,7 @@ pub mod disasm {
         fn iny(code: T) -> String {
             format!("(${:02x}), y", code.next().unwrap())
         }
-        fn nil(code: T) -> String {
+        fn nil(_code: T) -> String {
             "".to_string()
         }
     }
@@ -146,111 +147,541 @@ pub mod disasm {
     }
 }
 
+macro_rules! make16 {
+    ($high: expr, $low: expr) => ((($high as u16) << 8) | ($low as u16));
+}
+
+macro_rules! read16 {
+    ($mem: expr, $laddr: expr) => (make16!($mem.read($laddr.wrapping_add(1)),
+                                                $mem.read($laddr)));
+}
+
 mod ops {
-    use mos6502::CPU;
+    use mos6502::{CPU, AddrMode};
     make_optable!(OPS, fn (&mut CPU));
 
-    fn adc(cpu: &mut CPU) {}
-    fn and(cpu: &mut CPU) {}
-    fn asl(cpu: &mut CPU) {}
-    fn bcc(cpu: &mut CPU) {}
-    fn bcs(cpu: &mut CPU) {}
-    fn beq(cpu: &mut CPU) {}
-    fn bit(cpu: &mut CPU) {}
-    fn bmi(cpu: &mut CPU) {}
-    fn bne(cpu: &mut CPU) {}
-    fn bpl(cpu: &mut CPU) {}
-    fn brk(cpu: &mut CPU) {}
-    fn bvc(cpu: &mut CPU) {}
-    fn bvs(cpu: &mut CPU) {}
-    fn clc(cpu: &mut CPU) {}
-    fn cld(cpu: &mut CPU) {}
-    fn cli(cpu: &mut CPU) {}
-    fn clv(cpu: &mut CPU) {}
-    fn cmp(cpu: &mut CPU) {}
-    fn cpx(cpu: &mut CPU) {}
-    fn cpy(cpu: &mut CPU) {}
-    fn dec(cpu: &mut CPU) {}
-    fn dex(cpu: &mut CPU) {}
-    fn dey(cpu: &mut CPU) {}
-    fn eor(cpu: &mut CPU) {}
-    fn inc(cpu: &mut CPU) {}
-    fn inx(cpu: &mut CPU) {}
-    fn iny(cpu: &mut CPU) {}
-    fn jmp(cpu: &mut CPU) {}
-    fn jsr(cpu: &mut CPU) {}
-    fn lda(cpu: &mut CPU) {}
-    fn ldx(cpu: &mut CPU) {}
-    fn ldy(cpu: &mut CPU) {}
-    fn lsr(cpu: &mut CPU) {}
-    fn nop(cpu: &mut CPU) {}
-    fn ora(cpu: &mut CPU) {}
-    fn pha(cpu: &mut CPU) {}
-    fn php(cpu: &mut CPU) {}
-    fn pla(cpu: &mut CPU) {}
-    fn plp(cpu: &mut CPU) {}
-    fn rol(cpu: &mut CPU) {}
-    fn ror(cpu: &mut CPU) {}
-    fn rti(cpu: &mut CPU) {}
-    fn rts(cpu: &mut CPU) {}
-    fn sbc(cpu: &mut CPU) {}
-    fn sec(cpu: &mut CPU) {}
-    fn sed(cpu: &mut CPU) {}
-    fn sei(cpu: &mut CPU) {}
-    fn sta(cpu: &mut CPU) {}
-    fn stx(cpu: &mut CPU) {}
-    fn sty(cpu: &mut CPU) {}
-    fn tax(cpu: &mut CPU) {}
-    fn tay(cpu: &mut CPU) {}
-    fn tsx(cpu: &mut CPU) {}
-    fn txa(cpu: &mut CPU) {}
-    fn txs(cpu: &mut CPU) {}
-    fn tya(cpu: &mut CPU) {}
-    fn nil(cpu: &mut CPU) {}
+    const CARRY_FLAG: u8 = 1 << 0;
+    const ZERO_FLAG: u8 = 1 << 1;
+    const INT_FLAG: u8 = 1 << 2;
+    const DEC_FLAG: u8 = 1 << 3;
+    const BRK_FLAG: u8 = 1 << 4;
+    const OVER_FLAG: u8 = 1 << 6;
+    const NEG_FLAG: u8 = 1 << 7;
+
+    macro_rules! check_zero {
+        ($st: ident, $r: expr) => ($st |= (($r as u8 == 0) as u8) << 1);
+    }
+    macro_rules! check_neg {
+        ($st: ident, $r: expr) => ($st |= ($r as u8 & NEG_FLAG) as u8);
+    }
+
+    fn adc(cpu: &mut CPU) {
+        let opr1 = cpu.a as u16;
+        let opr2 = match cpu.addr_mode {
+                    AddrMode::Immediate => cpu.imm_val,
+                    AddrMode::Accumulator => cpu.a,
+                    AddrMode::EffAddr => cpu.mem.read(cpu.ea)
+                    } as u16;
+        let res = opr1 + opr2 + cpu.get_carry() as u16;
+        let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | OVER_FLAG | NEG_FLAG);
+        cpu.a = res as u8;
+        status |= (res > 0xff) as u8; /* carry flag */
+        check_zero!(status, res);
+        status |= ((((opr1 ^ opr2) as u8 & 0x80) ^ 0x80) &
+                     ((opr1 ^ res) as u8 & 0x80)) >> 1; /* over flag */
+        check_neg!(status, res);
+        cpu.status = status;
+    }
+
+
+    fn sbc(cpu: &mut CPU) {
+        let opr1 = cpu.a as u16;
+        let opr2 = match cpu.addr_mode {
+                    AddrMode::Immediate => cpu.imm_val,
+                    AddrMode::Accumulator => cpu.a,
+                    AddrMode::EffAddr => cpu.mem.read(cpu.ea)
+                    } as u16;
+        let res = opr1 + (0xff - opr2) + cpu.get_carry() as u16;
+        let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | OVER_FLAG | NEG_FLAG);
+        cpu.a = res as u8;
+        status |= (res > 0xff) as u8; /* carry flag */
+        check_zero!(status, res);
+        status |= (((opr1 ^ opr2) as u8 & 0x80) &
+                    ((opr1 ^ res) as u8 & 0x80)) >> 1; /* over flag */
+        check_neg!(status, res);
+        cpu.status = status;
+    }
+    
+    macro_rules! make_logic {
+        ($f: ident, $op: tt) => (
+        fn $f(cpu: &mut CPU) {
+            let res = cpu.a $op match cpu.addr_mode {
+                        AddrMode::Immediate => cpu.imm_val,
+                        _ => cpu.mem.read(cpu.ea)
+                    };
+            let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
+            cpu.a = res as u8;
+            check_zero!(status, res);
+            check_neg!(status, res);
+            cpu.status = status;
+        });
+    }
+
+    make_logic!(and, &);
+    make_logic!(eor, ^);
+    make_logic!(ora, |);
+
+    fn asl(cpu: &mut CPU) {
+        let res = match cpu.addr_mode {
+                    AddrMode::Accumulator => {
+                        let t = (cpu.a as u16) << 1;
+                        cpu.a = t as u8;
+                        t
+                    },
+                    _ => {
+                        let t = (cpu.mem.read(cpu.ea) as u16) << 1;
+                        cpu.mem.write(cpu.ea, t as u8);
+                        t
+                    }};
+        let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
+        status |= (res > 0xff) as u8; /* carry flag */
+        check_zero!(status, res);
+        check_neg!(status, res);
+        cpu.status = status;
+    }
+    
+    fn lsr(cpu: &mut CPU) {
+        let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
+        let res = match cpu.addr_mode {
+                    AddrMode::Accumulator => {
+                        let old = cpu.a;
+                        let t = old >> 1;
+                        cpu.a = t as u8;
+                        status |= (old & 1) as u8; /* carry flag */
+                        t
+                    },
+                    _ => {
+                        let old = cpu.mem.read(cpu.ea);
+                        let t = old >> 1;
+                        cpu.mem.write(cpu.ea, t as u8);
+                        status |= (old & 1) as u8; /* carry flag */
+                        t
+                    }};
+        check_zero!(status, res);
+        check_neg!(status, res);
+        cpu.status = status;
+    }
+
+    fn rol(cpu: &mut CPU) {
+        let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
+        let res = match cpu.addr_mode {
+                    AddrMode::Accumulator => {
+                        let old = cpu.a;
+                        let t = old.rotate_left(1);
+                        cpu.a = t as u8;
+                        status |= old >> 7 as u8; /* carry flag */
+                        t
+                    },
+                    _ => {
+                        let old = cpu.mem.read(cpu.ea);
+                        let t = old.rotate_left(1);
+                        cpu.mem.write(cpu.ea, t as u8);
+                        status |= old >> 7 as u8; /* carry flag */
+                        t
+                    }};
+        check_zero!(status, res);
+        check_neg!(status, res);
+        cpu.status = status;
+    }
+
+    fn ror(cpu: &mut CPU) {
+        let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
+        let res = match cpu.addr_mode {
+                    AddrMode::Accumulator => {
+                        let old = cpu.a;
+                        let t = old.rotate_right(1);
+                        cpu.a = t as u8;
+                        status |= old & 1 as u8; /* carry flag */
+                        t
+                    },
+                    _ => {
+                        let old = cpu.mem.read(cpu.ea);
+                        let t = old.rotate_right(1);
+                        cpu.mem.write(cpu.ea, t as u8);
+                        status |= old & 1 as u8; /* carry flag */
+                        t
+                    }};
+        check_zero!(status, res);
+        check_neg!(status, res);
+        cpu.status = status;
+    }
+
+    fn bit(cpu: &mut CPU) {
+        let m = cpu.mem.read(cpu.ea);
+        let mut status = cpu.status & !(ZERO_FLAG | OVER_FLAG | NEG_FLAG);
+        check_zero!(status, (m & cpu.a));
+        status |= ((m >> 6) & 0x3) << 6; /* copy bit 6 & 7 */
+        cpu.status = status;
+    }
+
+    macro_rules! make_branch_clear {
+        ($f: ident, $e: ident) => (fn $f(cpu: &mut CPU) {
+            match cpu.$e() {
+                0 => {
+                    cpu.pc = (cpu.pc as i32 + cpu.ea as i32) as u16;
+                    cpu.cycle.wrapping_add(1);
+                },
+                _ => ()
+            }});
+    }
+
+    macro_rules! make_branch_set {
+        ($f: ident, $e: ident) => (fn $f(cpu: &mut CPU) {
+            match cpu.$e() {
+                0 => (),
+                _ => {
+                    cpu.pc = (cpu.pc as i32 + cpu.ea as i32) as u16;
+                    cpu.cycle.wrapping_add(1);
+                }
+            }});
+    }
+
+    make_branch_clear!(bcc, get_carry);
+    make_branch_set!(bcs, get_carry);
+    make_branch_clear!(bne, get_zero);
+    make_branch_set!(beq, get_zero);
+    make_branch_clear!(bpl, get_neg);
+    make_branch_set!(bmi, get_neg);
+    make_branch_clear!(bvc, get_over);
+    make_branch_set!(bvs, get_over);
+
+    macro_rules! stack_addr {
+        ($sp: ident, $disp: expr) => (($sp.wrapping_sub($disp) as u16) | 0x0100);
+    }
+
+    fn brk(cpu: &mut CPU) {
+        let npc = cpu.pc.wrapping_add(2);
+        let sp = cpu.sp;
+        cpu.mem.write(stack_addr!(sp, 0), (npc >> 8) as u8); /* push high pc */
+        cpu.mem.write(stack_addr!(sp, 1), npc as u8); /* push low pc */
+        cpu.status |= BRK_FLAG;
+        cpu.mem.write(stack_addr!(sp, 2), cpu.status); /* push status */
+        cpu.sp = sp.wrapping_sub(3);
+        cpu.pc = read16!(cpu.mem, 0xfffe as u16); /* load the interrupt vector */
+    }
+
+    fn clc(cpu: &mut CPU) { cpu.status &= !CARRY_FLAG; }
+    fn cld(cpu: &mut CPU) { cpu.status &= !DEC_FLAG; }
+    fn cli(cpu: &mut CPU) { cpu.status &= !INT_FLAG; }
+    fn clv(cpu: &mut CPU) { cpu.status &= !OVER_FLAG; }
+
+    fn sec(cpu: &mut CPU) { cpu.status |= CARRY_FLAG; }
+    fn sed(cpu: &mut CPU) { cpu.status |= DEC_FLAG; }
+    fn sei(cpu: &mut CPU) { cpu.status |= INT_FLAG; }
+
+
+    macro_rules! make_cmp {
+        ($f: ident, $r: ident) => (fn $f(cpu: &mut CPU) {
+            let opr1 = cpu.$r as u16;
+            let opr2 = match cpu.addr_mode {
+                        AddrMode::Immediate => cpu.imm_val,
+                        _ => cpu.mem.read(cpu.ea)
+                        } as u16;
+            let res = opr1 - opr2;
+            let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
+            status |= (res < 0x100) as u8; /* carry flag */
+            check_zero!(status, res);
+            check_neg!(status, res);
+            cpu.status = status;
+        });
+    }
+
+    make_cmp!(cmp, a);
+    make_cmp!(cpx, x);
+    make_cmp!(cpy, y);
+
+    macro_rules! make_delta {
+        ($f: ident, $d: expr) => (
+            fn $f(cpu: &mut CPU) {
+                let res = cpu.mem.read(cpu.ea) as u16 + $d;
+                let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
+                cpu.mem.write(cpu.ea, res as u8);
+                check_zero!(status, res);
+                check_neg!(status, res);
+                cpu.status = status;
+            });
+        ($f: ident, $d: expr, $r: ident) => (
+            fn $f(cpu: &mut CPU) {
+                let res = cpu.$r as u16 + $d;
+                let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
+                cpu.$r = res as u8;
+                check_zero!(status, res);
+                check_neg!(status, res);
+                cpu.status = status;
+            });
+
+    }
+
+    make_delta!(dec, 0xff);
+    make_delta!(dex, 0xff, x);
+    make_delta!(dey, 0xff, y);
+    make_delta!(inc, 0x01);
+    make_delta!(inx, 0x01, x);
+    make_delta!(iny, 0x01, y);
+
+    fn jmp(cpu: &mut CPU) { cpu.pc = cpu.ea; }
+
+    fn jsr(cpu: &mut CPU) {
+        let sp = cpu.sp;
+        let pc = cpu.pc.wrapping_sub(1);
+        cpu.mem.write(stack_addr!(sp, 0), (pc >> 8) as u8);
+        cpu.mem.write(stack_addr!(sp, 1), pc as u8);
+        cpu.sp = sp.wrapping_sub(2);
+        cpu.pc = cpu.ea;
+    }
+
+    macro_rules! make_ld {
+        ($f: ident, $r: ident) => (fn $f(cpu: &mut CPU) {
+            let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
+            let res = cpu.mem.read(cpu.ea);
+            cpu.a = res;
+            check_zero!(status, res);
+            check_neg!(status, res);
+            cpu.status = status;
+        });
+    }
+
+    make_ld!(lda, a);
+    make_ld!(ldx, x);
+    make_ld!(ldy, y);
+
+    macro_rules! make_st {
+        ($f: ident, $r: ident) => (fn $f(cpu: &mut CPU) {
+            cpu.mem.write(cpu.ea, cpu.$r);
+        });
+    }
+
+    make_st!(sta, a);
+    make_st!(stx, x);
+    make_st!(sty, y);
+
+    macro_rules! make_trans {
+        ($f: ident, $from: ident, $to: ident) => (fn $f(cpu: &mut CPU) {
+            let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
+            let res = cpu.$from;
+            cpu.$to = res; 
+            check_zero!(status, res);
+            check_neg!(status, res);
+            cpu.status = status;
+        });
+    }
+
+    make_trans!(tax, a, x);
+    make_trans!(tay, a, y);
+    make_trans!(tsx, sp, x);
+    make_trans!(txa, x, a);
+    make_trans!(txs, x, sp);
+    make_trans!(tya, y, a);
+
+    fn pha(cpu: &mut CPU) {
+        let sp = cpu.sp;
+        cpu.mem.write(stack_addr!(sp, 0), cpu.a);
+        cpu.sp = sp.wrapping_sub(1);
+    }
+
+    fn php(cpu: &mut CPU) {
+        let sp = cpu.sp;
+        cpu.mem.write(stack_addr!(sp, 0), cpu.status);
+        cpu.sp = sp.wrapping_sub(1);
+    }
+
+    fn pla(cpu: &mut CPU) {
+        let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
+        let sp = cpu.sp.wrapping_add(1);
+        let res = cpu.mem.read(stack_addr!(sp, 0));
+        cpu.a = res;
+        cpu.sp = sp;
+        check_zero!(status, res);
+        check_neg!(status, res);
+        cpu.status = status;
+    }
+
+    fn plp(cpu: &mut CPU) {
+        let sp = cpu.sp.wrapping_add(1);
+        cpu.status = cpu.mem.read(stack_addr!(sp, 0));
+        cpu.sp = sp;
+    }
+
+    fn rti(cpu: &mut CPU) {
+        let sp = cpu.sp.wrapping_add(3);
+        cpu.status = cpu.mem.read(stack_addr!(sp, 2));
+        cpu.pc = make16!(cpu.mem.read(stack_addr!(sp, 0)),
+                        cpu.mem.read(stack_addr!(sp, 1)));
+        cpu.sp = sp;
+    }
+
+    fn rts(cpu: &mut CPU) {
+        let sp = cpu.sp.wrapping_add(2);
+        cpu.pc = make16!(cpu.mem.read(stack_addr!(sp, 0)),
+                        cpu.mem.read(stack_addr!(sp, 1))).wrapping_add(1);
+        cpu.sp = sp;
+    }
+
+    fn nop(_cpu: &mut CPU) {}
+    fn nil(cpu: &mut CPU) {
+        panic!("invalid instruction: 0x{:02x}", cpu.mem.read(cpu.pc));
+    }
 }
 
 mod addr {
-    use mos6502::CPU;
+    use mos6502::{CPU, AddrMode};
     make_addrtable!(ADDR_MODES, fn (&mut CPU));
 
-    fn acc(cpu: &mut CPU) {}
-    fn imm(cpu: &mut CPU) {}
-    fn zpg(cpu: &mut CPU) {}
-    fn zpx(cpu: &mut CPU) {}
-    fn zpy(cpu: &mut CPU) {}
-    fn rel(cpu: &mut CPU) {}
-    fn abs(cpu: &mut CPU) {}
-    fn abx(cpu: &mut CPU) {}
-    fn aby(cpu: &mut CPU) {}
-    fn ind(cpu: &mut CPU) {}
-    fn xin(cpu: &mut CPU) {}
-    fn iny(cpu: &mut CPU) {}
-    fn nil(cpu: &mut CPU) {}
+    fn acc(cpu: &mut CPU) {
+        cpu.addr_mode = AddrMode::Accumulator;
+    }
+
+    fn imm(cpu: &mut CPU) {
+        cpu.addr_mode = AddrMode::Immediate;
+        cpu.imm_val = cpu.mem.read(cpu.pc.wrapping_add(1));
+    }
+
+    fn zpg(cpu: &mut CPU) {
+        cpu.addr_mode = AddrMode::EffAddr;
+        cpu.ea = cpu.mem.read(cpu.pc.wrapping_add(1)) as u16;
+    }
+
+    fn zpx(cpu: &mut CPU) {
+        cpu.addr_mode = AddrMode::EffAddr;
+        cpu.ea = (cpu.mem.read(cpu.pc.wrapping_add(1))
+                        .wrapping_add(cpu.x)) as u16;
+    }
+
+    fn zpy(cpu: &mut CPU) {
+        cpu.addr_mode = AddrMode::EffAddr;
+        cpu.ea = (cpu.mem.read(cpu.pc.wrapping_add(1))
+                        .wrapping_add(cpu.y)) as u16;
+    }
+
+    fn rel(cpu: &mut CPU) {
+        cpu.addr_mode = AddrMode::EffAddr;
+        cpu.ea = cpu.mem.read(cpu.pc.wrapping_add(1)) as u16;
+    }
+
+    fn abs(cpu: &mut CPU) {
+        cpu.addr_mode = AddrMode::EffAddr;
+        cpu.ea = read16!(cpu.mem, cpu.pc.wrapping_add(1));
+    }
+
+    fn abx(cpu: &mut CPU) {
+        cpu.addr_mode = AddrMode::EffAddr;
+        cpu.ea = read16!(cpu.mem, cpu.pc.wrapping_add(1))
+                                .wrapping_add(cpu.x as u16);
+    }
+
+    fn aby(cpu: &mut CPU) {
+        cpu.addr_mode = AddrMode::EffAddr;
+        cpu.ea = read16!(cpu.mem, cpu.pc.wrapping_add(1))
+                                .wrapping_add(cpu.y as u16);
+    }
+
+    fn ind(cpu: &mut CPU) {
+        cpu.addr_mode = AddrMode::EffAddr;
+        let addr = read16!(cpu.mem, cpu.pc.wrapping_add(1));
+        cpu.ea = read16!(cpu.mem, addr);
+    }
+
+    fn xin(cpu: &mut CPU) {
+        cpu.addr_mode = AddrMode::EffAddr;
+        let addr = cpu.mem.read(cpu.mem.read(cpu.pc.wrapping_add(1))
+                                    .wrapping_add(cpu.x) as u16) as u16;
+        cpu.ea = read16!(cpu.mem, addr);
+    }
+
+    fn iny(cpu: &mut CPU) {
+        cpu.addr_mode = AddrMode::EffAddr;
+        let addr = cpu.mem.read(cpu.mem.read(cpu.pc.wrapping_add(1)) as u16) as u16;
+        cpu.ea = read16!(cpu.mem, addr).wrapping_add(cpu.y as u16);
+    }
+
+    fn nil(_cpu: &mut CPU) {}
 }
 
 pub trait VMem {
-    fn read(addr: u16) -> u8;
-    fn write(addr: u16, data: u8);
+    fn read(&self, addr: u16) -> u8;
+    fn write(&mut self, addr: u16, data: u8);
 }
 
-pub struct CPU {
+pub struct CPUMemory {
+    internal: [u8; 2048]
+}
+
+impl CPUMemory {
+    pub fn new() -> Self {
+        CPUMemory{internal: [0; 2048]}
+    }
+}
+
+impl VMem for CPUMemory {
+    fn read(&self, addr: u16) -> u8 {
+        if addr < 0x2000 {
+            self.internal[(addr & 0x07ff) as usize]
+        } else if addr < 0x4000 {
+            match addr & 0x7 {
+                _ => 0
+            }
+        } else {
+            panic!("invalid memory read access at 0x{:04x}", addr)
+        }
+    }
+    fn write(&mut self, addr: u16, data: u8) {
+        if addr < 0x2000 {
+            self.internal[(addr & 0x07ff) as usize] = data;
+        } else if addr < 0x4000 {
+            match addr & 0x7 {
+                _ => ()
+            }
+        } else {
+            panic!("invalid memory write access at 0x{:04x}", addr)
+        }
+    }
+}
+
+enum AddrMode {
+    Immediate,
+    Accumulator,
+    EffAddr
+}
+
+pub struct CPU<'a> {
     /* registers */
     a: u8,
     x: u8,
     y: u8,
     status: u8,
-    pc: u8,
+    pc: u16,
     sp: u8,
     /* internal state */
+    addr_mode: AddrMode,
     ea: u16,    /* effective address */
+    imm_val: u8,
+    cycle: u32,
+    mem: &'a mut VMem
 }
 
-impl CPU {
+impl<'a> CPU<'a> {
     fn step(&mut self, opcode: u8) {
         ops::OPS[opcode as usize](self);
         addr::ADDR_MODES[opcode as usize](self);
     }
-    fn new() -> Self {
-        CPU{a: 0, x: 0, y: 0, status: 0, pc: 0, sp: 0, ea: 0}
+    #[inline(always)] pub fn get_carry(&self) -> u8 { (self.status >> 0) & 1 }
+    #[inline(always)] pub fn get_zero(&self) -> u8 { (self.status >> 1) & 1 }
+    #[inline(always)] pub fn get_over(&self) -> u8 { (self.status >> 6) & 1 }
+    #[inline(always)] pub fn get_neg(&self) -> u8 { (self.status >> 7) & 1 }
+    pub fn new(mem: &'a mut VMem) -> Self {
+        CPU{a: 0, x: 0, y: 0, status: 0, pc: 0, sp: 0, ea: 0, cycle: 0,
+            addr_mode: AddrMode::EffAddr,
+            imm_val: 0,
+            mem}
     }
 }
