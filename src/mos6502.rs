@@ -43,42 +43,55 @@ macro_rules! make_addrtable {
 }
 
 const INST_LENGTH: [u8; 0x100] =  [
-    0, 2, 0, 0, 0, 2, 2, 0, 0, 2, 1, 0, 0, 3, 3, 0,
-    2, 2, 0, 0, 0, 2, 2, 0, 0, 3, 0, 0, 0, 3, 3, 0,
-    3, 2, 0, 0, 2, 2, 2, 0, 0, 2, 1, 0, 3, 3, 3, 0,
-    2, 2, 0, 0, 0, 2, 2, 0, 0, 3, 0, 0, 0, 3, 3, 0,
-    0, 2, 0, 0, 0, 2, 2, 0, 0, 2, 1, 0, 3, 3, 3, 0,
-    2, 2, 0, 0, 0, 2, 2, 0, 0, 3, 0, 0, 0, 3, 3, 0,
-    0, 2, 0, 0, 0, 2, 2, 0, 0, 2, 1, 0, 3, 3, 3, 0,
-    2, 2, 0, 0, 0, 2, 2, 0, 0, 3, 0, 0, 0, 3, 3, 0,
-    0, 2, 0, 0, 2, 2, 2, 0, 0, 0, 0, 0, 3, 3, 3, 0,
-    2, 2, 0, 0, 2, 2, 2, 0, 0, 3, 0, 0, 0, 3, 0, 0,
-    2, 2, 2, 0, 2, 2, 2, 0, 0, 2, 0, 0, 3, 3, 3, 0,
-    2, 2, 0, 0, 2, 2, 2, 0, 0, 3, 0, 0, 3, 3, 3, 0,
-    2, 2, 0, 0, 2, 2, 2, 0, 0, 2, 0, 0, 3, 3, 3, 0,
-    2, 2, 0, 0, 0, 2, 2, 0, 0, 3, 0, 0, 0, 3, 3, 0,
-    2, 2, 0, 0, 2, 2, 2, 0, 0, 2, 0, 0, 3, 3, 3, 0,
-    2, 2, 0, 0, 0, 2, 2, 0, 0, 3, 0, 0, 0, 3, 3, 0,
+    1, 2, 0, 0, 2, 2, 2, 0, 1, 2, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 1, 3, 1, 0, 3, 3, 3, 0,
+    3, 2, 0, 0, 2, 2, 2, 0, 1, 2, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 1, 3, 1, 0, 3, 3, 3, 0,
+    1, 2, 0, 0, 2, 2, 2, 0, 1, 2, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 1, 3, 1, 0, 3, 3, 3, 0,
+    1, 2, 0, 0, 2, 2, 2, 0, 1, 2, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 1, 3, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 1, 0, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 1, 3, 1, 0, 0, 3, 0, 0,
+    2, 2, 2, 0, 2, 2, 2, 0, 1, 2, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 1, 3, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 1, 2, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 1, 3, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 1, 2, 1, 0, 3, 3, 3, 0,
+    2, 2, 0, 0, 2, 2, 2, 0, 1, 3, 1, 0, 3, 3, 3, 0,
 ];
 
 const INST_CYCLE: [u8; 0x100] = [
-    0, 6, 0, 0, 0, 3, 5, 0, 0, 2, 2, 0, 0, 4, 6, 0,
-    2, 5, 0, 0, 0, 4, 6, 0, 0, 4, 0, 0, 0, 4, 7, 0,
-    6, 6, 0, 0, 3, 3, 5, 0, 0, 2, 2, 0, 4, 4, 6, 0,
-    2, 5, 0, 0, 0, 4, 6, 0, 0, 4, 0, 0, 0, 4, 7, 0,
-    0, 6, 0, 0, 0, 3, 5, 0, 0, 2, 2, 0, 3, 4, 6, 0,
-    2, 5, 0, 0, 0, 4, 6, 0, 0, 4, 0, 0, 0, 4, 7, 0,
-    0, 6, 0, 0, 0, 3, 5, 0, 0, 2, 2, 0, 5, 4, 6, 0,
-    2, 5, 0, 0, 0, 4, 6, 0, 0, 4, 0, 0, 0, 4, 7, 0,
-    0, 6, 0, 0, 3, 3, 3, 0, 0, 0, 0, 0, 4, 4, 4, 0,
-    2, 6, 0, 0, 4, 4, 4, 0, 0, 5, 0, 0, 0, 5, 0, 0,
-    2, 6, 2, 0, 3, 3, 3, 0, 0, 2, 0, 0, 4, 4, 4, 0,
-    2, 5, 0, 0, 4, 4, 4, 0, 0, 4, 0, 0, 4, 4, 4, 0,
-    2, 6, 0, 0, 3, 3, 5, 0, 0, 2, 0, 0, 4, 4, 6, 0,
-    2, 5, 0, 0, 0, 4, 6, 0, 0, 4, 0, 0, 0, 4, 7, 0,
-    2, 6, 0, 0, 3, 3, 5, 0, 0, 2, 0, 0, 4, 4, 6, 0,
-    2, 5, 0, 0, 0, 4, 6, 0, 0, 4, 0, 0, 0, 4, 7, 0,
+    7, 6, 2, 8, 3, 3, 5, 5, 3, 2, 2, 2, 4, 4, 6, 6,
+    2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
+    6, 6, 2, 8, 3, 3, 5, 5, 4, 2, 2, 2, 4, 4, 6, 6,
+    2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
+    6, 6, 2, 8, 3, 3, 5, 5, 3, 2, 2, 2, 3, 4, 6, 6,
+    2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
+    6, 6, 2, 8, 3, 3, 5, 5, 4, 2, 2, 2, 5, 4, 6, 6,
+    2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
+    2, 6, 2, 6, 3, 3, 3, 3, 2, 2, 2, 2, 4, 4, 4, 4,
+    2, 6, 2, 6, 4, 4, 4, 4, 2, 5, 2, 5, 5, 5, 5, 5,
+    2, 6, 2, 6, 3, 3, 3, 3, 2, 2, 2, 2, 4, 4, 4, 4,
+    2, 5, 2, 5, 4, 4, 4, 4, 2, 4, 2, 4, 4, 4, 4, 4,
+    2, 6, 2, 8, 3, 3, 5, 5, 2, 2, 2, 2, 4, 4, 6, 6,
+    2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
+    2, 6, 2, 8, 3, 3, 5, 5, 2, 2, 2, 2, 4, 4, 6, 6,
+    2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
 ];
+
+const NMI_VECTOR: u16 = 0xfffa;
+const RESET_VECTOR: u16 = 0xfffc;
+const IRQ_VECTOR: u16 = 0xfffe;
+const BRK_VECTOR: u16 = 0xfffe;
+
+const CARRY_FLAG: u8 = 1 << 0;
+const ZERO_FLAG: u8 = 1 << 1;
+const INT_FLAG: u8 = 1 << 2;
+const DEC_FLAG: u8 = 1 << 3;
+const BRK_FLAG: u8 = 1 << 4;
+const OVER_FLAG: u8 = 1 << 6;
+const NEG_FLAG: u8 = 1 << 7;
 
 macro_rules! ids2strs {
     ($($x:ident), *) => {
@@ -185,6 +198,10 @@ pub mod disasm {
     }
 }
 
+macro_rules! stack_addr {
+    ($sp: ident, $disp: expr) => (($sp.wrapping_sub($disp) as u16) | 0x0100);
+}
+
 macro_rules! make16 {
     ($high: expr, $low: expr) => ((($high as u16) << 8) | ($low as u16));
 }
@@ -195,16 +212,8 @@ macro_rules! read16 {
 }
 
 mod ops {
-    use mos6502::{CPU, AddrMode};
+    use mos6502::*;
     make_optable!(OPS, fn (&mut CPU));
-
-    const CARRY_FLAG: u8 = 1 << 0;
-    const ZERO_FLAG: u8 = 1 << 1;
-    const INT_FLAG: u8 = 1 << 2;
-    const DEC_FLAG: u8 = 1 << 3;
-    const BRK_FLAG: u8 = 1 << 4;
-    const OVER_FLAG: u8 = 1 << 6;
-    const NEG_FLAG: u8 = 1 << 7;
 
     macro_rules! check_zero {
         ($st: ident, $r: expr) => ($st |= (($r as u8 == 0) as u8) << 1);
@@ -448,10 +457,6 @@ mod ops {
     make_branch_clear!(bvc, get_over);
     make_branch_set!(bvs, get_over);
 
-    macro_rules! stack_addr {
-        ($sp: ident, $disp: expr) => (($sp.wrapping_sub($disp) as u16) | 0x0100);
-    }
-
     fn brk(cpu: &mut CPU) {
         let pc = cpu.pc;
         let sp = cpu.sp;
@@ -459,8 +464,9 @@ mod ops {
         cpu.mem.write(stack_addr!(sp, 1), pc as u8); /* push low pc */
         cpu.status |= BRK_FLAG;
         cpu.mem.write(stack_addr!(sp, 2), cpu.status); /* push status */
+        cpu.status |= INT_FLAG;
         cpu.sp = sp.wrapping_sub(3);
-        cpu.pc = read16!(cpu.mem, 0xfffe as u16); /* load the interrupt vector */
+        cpu.pc = read16!(cpu.mem, BRK_VECTOR); /* load the interrupt vector */
     }
 
     /* status flag changes */
@@ -716,6 +722,11 @@ enum AddrMode {
     EffAddr
 }
 
+enum IntType {
+    NMI,
+    IRQ
+}
+
 pub struct CPU<'a> {
     /* registers */
     a: u8,
@@ -730,26 +741,52 @@ pub struct CPU<'a> {
     ea: u16,    /* effective address */
     imm_val: u8,
     cycle: u32,
+    int: Option<IntType>,
     mem: &'a mut VMem
+}
+
+macro_rules! make_int {
+    ($f:ident, $v: expr) => (
+    fn $f(&mut self) {
+        let pc = self.pc;
+        let sp = self.sp;
+        self.mem.write(stack_addr!(sp, 0), (pc >> 8) as u8);
+        self.mem.write(stack_addr!(sp, 1), pc as u8);
+        self.mem.write(stack_addr!(sp, 2), self.status);
+        self.sp = sp.wrapping_sub(3);
+        self.pc = read16!(self.mem, $v as u16);
+        self.status |= INT_FLAG;
+        self.cycle += 7;
+    });
 }
 
 impl<'a> CPU<'a> {
     #[inline(always)] pub fn get_carry(&self) -> u8 { (self.status >> 0) & 1 }
     #[inline(always)] pub fn get_zero(&self) -> u8 { (self.status >> 1) & 1 }
+    #[inline(always)] pub fn get_int(&self) -> u8 { (self.status >> 2) & 1 }
     #[inline(always)] pub fn get_over(&self) -> u8 { (self.status >> 6) & 1 }
     #[inline(always)] pub fn get_neg(&self) -> u8 { (self.status >> 7) & 1 }
 
     pub fn new(mem: &'a mut VMem) -> Self {
         CPU{a: 0, x: 0, y: 0,
             pc: 0, sp: 0, status: 0,
-            opr: 0, ea: 0, cycle: 0,
+            opr: 0, ea: 0, cycle: 0, imm_val: 0,
+            int: None,
             addr_mode: AddrMode::EffAddr,
-            imm_val: 0,
             mem}
     }
 
+    make_int!(nmi, NMI_VECTOR);
+    make_int!(irq, IRQ_VECTOR);
+
     pub fn step(&mut self) {
         let pc = self.pc;
+        match self.int {
+            Some(IntType::NMI) => self.nmi(),
+            Some(IntType::IRQ) => self.irq(),
+            _ => ()
+        }
+        self.int = None;
         let opcode = self.mem.read(pc) as usize;
         /* update opr pointing to operands of current inst */
         self.opr = pc.wrapping_add(1);
@@ -760,5 +797,37 @@ impl<'a> CPU<'a> {
         /* execute the inst */
         ops::OPS[opcode](self);
         self.cycle += INST_CYCLE[opcode] as u32;
+    }
+
+    pub fn powerup(&mut self) {
+        self.pc = read16!(self.mem, RESET_VECTOR as u16);
+        /* nes power up state */
+        self.a = 0;
+        self.x = 0;
+        self.y = 0;
+        self.sp = 0xfd;
+        self.status = 0x34;
+        self.cycle = 0;
+    }
+
+    pub fn reset(&mut self) {
+        self.pc = read16!(self.mem, RESET_VECTOR as u16);
+        /* nes power up state */
+        self.sp.wrapping_sub(3);
+        self.status |= INT_FLAG;
+        self.cycle = 0;
+    }
+
+    pub fn trigger_nmi(&mut self) {
+        self.int = Some(IntType::NMI);
+    }
+
+    pub fn trigger_irq(&mut self) {
+        if self.get_int() == 0 {
+            self.int = Some(match self.int {
+                Some(IntType::NMI) => IntType::NMI,
+                _ => IntType::IRQ
+            });
+        }
     }
 }
