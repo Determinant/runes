@@ -45,6 +45,8 @@ struct PPU<'a, 'b> {
     oam2: [Sprite; 8],
     sp_bitmap: [[u8; 2]; 8],
     sp_cnt: [u8; 8],
+    sp_zero_insight: bool,
+    /* IO */
     mem: &'a mut VMem,
     scr: &'b mut Screen
 }
@@ -166,9 +168,13 @@ impl<'a, 'b> PPU<'a, 'b> {
             0 => 8,
             _ => 16
         };
+        self.sp_zero_insight = false;
         for (i, s) in self.oam.iter().enumerate() {
             let y = s.y as u16;
             if y <= self.scanline && self.scanline < y + h {
+                if nidx == 0 {
+                    self.sp_zero_insight = true;
+                }
                 self.oam2[nidx] = *s;
                 nidx += 1;
                 if nidx == 8 {
@@ -255,9 +261,13 @@ impl<'a, 'b> PPU<'a, 'b> {
         let mut sp = 0x0;
         let mut pri = 0x1;
         for i in 0..8 {
+            if self.sp_cnt[i] != 0 { continue; } /* not active */
             match self.get_sppixel(i as usize) {
                 0x0 => (),
                 c => {
+                    if self.sp_zero_insight && bg != 0 && i == 0 {
+                        self.ppustatus |= 1 << 6; /* set sprite zero hit */
+                    }
                     sp = c;
                     pri = (self.oam2[i].attr >> 5) & 1;
                     break;
@@ -283,6 +293,8 @@ impl<'a, 'b> PPU<'a, 'b> {
         if pre_render {
             if cycle == 1 {
                 self.vblank = false;
+                /* clear sprite zero hit & overflow */
+                self.ppustatus &= !((1 << 6) | (1 << 5));
             } else if 279 < cycle && cycle < 305 {
                 self.reset_y();
             }
