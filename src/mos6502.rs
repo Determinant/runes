@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use memory::VMem;
 macro_rules! make_optable {
     ($x:ident, $t: ty) => (pub const $x: [$t; 0x100] = [
     /*  0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf */
@@ -674,46 +675,6 @@ mod addr {
     }
 
     fn nil(_cpu: &mut CPU) {}
-}
-
-pub trait VMem {
-    fn read(&self, addr: u16) -> u8;
-    fn write(&mut self, addr: u16, data: u8);
-}
-
-pub struct CPUMemory {
-    internal: [u8; 2048]
-}
-
-impl CPUMemory {
-    pub fn new() -> Self {
-        CPUMemory{internal: [0; 2048]}
-    }
-}
-
-impl VMem for CPUMemory {
-    fn read(&self, addr: u16) -> u8 {
-        if addr < 0x2000 {
-            self.internal[(addr & 0x07ff) as usize]
-        } else if addr < 0x4000 {
-            match addr & 0x7 {
-                _ => 0
-            }
-        } else {
-            panic!("invalid memory read access at 0x{:04x}", addr)
-        }
-    }
-    fn write(&mut self, addr: u16, data: u8) {
-        if addr < 0x2000 {
-            self.internal[(addr & 0x07ff) as usize] = data;
-        } else if addr < 0x4000 {
-            match addr & 0x7 {
-                _ => ()
-            }
-        } else {
-            panic!("invalid memory write access at 0x{:04x}", addr)
-        }
-    }
 }
 
 enum AddrMode {
