@@ -13,7 +13,7 @@ impl CPUMemory {
     }
 }
 
-impl VMem for CPUMemory {
+impl<'a> VMem for CPUMemory {
     fn read(&self, addr: u16) -> u8 {
         if addr < 0x2000 {
             self.internal[(addr & 0x07ff) as usize]
