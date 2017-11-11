@@ -148,12 +148,12 @@ impl<'a, 'b> PPU<'a, 'b> {
 
     #[inline(always)]
     fn reset_cx(&mut self) {
-        self.v = (self.v & !0x001fu16) | (self.t & 0x001f);
+        self.v = (self.v & !0x041fu16) | (self.t & 0x041f);
     }
 
     #[inline(always)]
     fn reset_y(&mut self) {
-        self.v = (self.v & !0x73e0u16) | (self.t & 0x73e0);
+        self.v = (self.v & !0x7be0u16) | (self.t & 0x7be0);
     }
 
     fn clear_sprite(&mut self) {
@@ -234,41 +234,21 @@ impl<'a, 'b> PPU<'a, 'b> {
         }
     }
 
-    fn get_bgpixel(&self) -> u8 {
-        let bg_idx = ((self.bg_bitmap[1] & 1) << 1) | (self.bg_bitmap[0] & 1);
-        match bg_idx {
-            0x0 => 0x0, /* transparent */
-            _ => {
-                let bg_pl = ((self.bg_palette[1] & 1) << 1) | (self.bg_palette[0] & 1);
-                self.mem.read(0x3f00 | (bg_pl << 2) as u16 | bg_idx as u16)
-            }
-        }
-    }
-
-    fn get_sppixel(&self, idx: usize) -> u8 {
-        let sp_idx = ((self.sp_bitmap[idx][1] & 1) << 1) | (self.sp_bitmap[idx][0] & 1);
-        match sp_idx {
-            0x0 => 0x0,
-            _ => {
-                let attr = self.oam2[idx].attr;
-                self.mem.read(0x3f10 | ((attr & 3) << 2) as u16 | sp_idx as u16)
-            }
-        }
-    }
-
     fn render_pixel(&mut self) {
-        let bg = self.get_bgpixel();
-        let mut sp = 0x0;
+        let bg_pidx = ((self.bg_bitmap[1] & 1) << 1) | (self.bg_bitmap[0] & 1);
+        let mut sp_pidx = 0x0;
+        let mut sp_idx = 0;
         let mut pri = 0x1;
         for i in 0..8 {
             if self.sp_cnt[i] != 0 { continue; } /* not active */
-            match self.get_sppixel(i as usize) {
+            match ((self.sp_bitmap[i][1] & 1) << 1) | (self.sp_bitmap[i][0] & 1) {
                 0x0 => (),
-                c => {
-                    if self.sp_zero_insight && bg != 0 && i == 0 {
+                pidx => {
+                    if self.sp_zero_insight && bg_pidx != 0 && i == 0 {
                         self.ppustatus |= 1 << 6; /* set sprite zero hit */
                     }
-                    sp = c;
+                    sp_pidx = pidx;
+                    sp_idx = i;
                     pri = (self.oam2[i].attr >> 5) & 1;
                     break;
                 }
@@ -278,7 +258,16 @@ impl<'a, 'b> PPU<'a, 'b> {
         assert!(self.scanline < 240);
         self.scr.put(self.cycle as u8 - 1,
                      self.scanline as u8,
-                     if pri == 0 || bg == 0 { sp } else { bg });
+                     if (pri == 0 || bg_pidx == 0) && sp_pidx != 0 {
+                        self.mem.read(0x3f10 |
+                                      ((self.oam2[sp_idx].attr & 3) << 2) as u16 |
+                                      sp_pidx as u16)
+                     } else {
+                        self.mem.read(0x3f00 |
+                                      (((self.bg_palette[1] & 1) << 3) |
+                                       ((self.bg_palette[0] & 1) << 2)) as u16 |
+                                      bg_pidx as u16)
+                     });
     }
 
     pub fn tick(&mut self) -> bool {
