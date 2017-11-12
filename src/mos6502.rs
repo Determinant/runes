@@ -701,9 +701,9 @@ pub struct CPU<'a> {
     opr: u16,
     ea: u16,    /* effective address */
     imm_val: u8,
-    cycle: u32,
+    pub cycle: u32,
     int: Option<IntType>,
-    mem: &'a mut VMem
+    pub mem: &'a mut VMem
 }
 
 macro_rules! make_int {
@@ -729,9 +729,18 @@ impl<'a> CPU<'a> {
     #[inline(always)] pub fn get_neg(&self) -> u8 { (self.status >> 7) & 1 }
 
     pub fn new(mem: &'a mut VMem) -> Self {
-        CPU{a: 0, x: 0, y: 0,
-            pc: 0, sp: 0, status: 0,
-            opr: 0, ea: 0, cycle: 0, imm_val: 0,
+        let pc = read16!(mem, RESET_VECTOR as u16);
+        /* nes power up state */
+        let a = 0;
+        let x = 0;
+        let y = 0;
+        let sp = 0xfd;
+        let status = 0x34;
+        let cycle = 0;
+
+        CPU{a, x, y,
+            pc, sp, status, cycle,
+            opr: 0, ea: 0, imm_val: 0,
             int: None,
             addr_mode: AddrMode::EffAddr,
             mem}
@@ -773,10 +782,10 @@ impl<'a> CPU<'a> {
 
     pub fn reset(&mut self) {
         self.pc = read16!(self.mem, RESET_VECTOR as u16);
-        /* nes power up state */
-        self.sp.wrapping_sub(3);
+        self.sp = self.sp.wrapping_sub(3);
         self.status |= INT_FLAG;
         self.cycle = 0;
+        self.int = None;
     }
 
     pub fn trigger_nmi(&mut self) {

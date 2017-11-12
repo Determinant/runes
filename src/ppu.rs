@@ -1,4 +1,6 @@
+#![allow(dead_code)]
 use memory::VMem;
+use mos6502::CPU;
 use core::intrinsics::transmute;
 
 pub trait Screen {
@@ -15,7 +17,7 @@ struct Sprite {
     x: u8
 }
 
-struct PPU<'a, 'b> {
+pub struct PPU<'a> {
     /* internal srams */
     nametable_ram: [u8; 2048],
     palette_ram: [u8; 32],
@@ -24,12 +26,14 @@ struct PPU<'a, 'b> {
     ppuctl: u8,
     ppumask: u8,
     ppustatus: u8,
+    oamaddr: u8,
+
+    reg: u8,
     
     x: u8, /* fine x scroll */
     v: u16, /* current vram addr */
     t: u16, /* temporary vram addr */
     w: bool, /* first/second write toggle */
-    vblank: bool,
     cycle: u16, /* cycle in the current scanline */
     /* rendering regs & latches */
         /* background registers */
@@ -46,13 +50,130 @@ struct PPU<'a, 'b> {
     sp_bitmap: [[u8; 2]; 8],
     sp_cnt: [u8; 8],
     sp_zero_insight: bool,
+    rendering: bool,
+    buffered_read: u8,
     /* IO */
     mem: &'a mut VMem,
-    scr: &'b mut Screen
+    scr: &'a mut Screen,
 }
 
-impl<'a, 'b> PPU<'a, 'b> {
+impl<'a> PPU<'a> {
+    pub fn write_ctl(&mut self, data: u8) {
+        self.ppuctl = data;
+        self.t = (self.t & 0x73ff) | ((data as u16 & 3) << 10);
+    }
+
+    pub fn write_mask(&mut self, data: u8) {
+        self.ppumask = data;
+    }
+
+    pub fn read_status(&mut self) -> u8 {
+        let res = (self.ppustatus & !0x1fu8) | (self.reg & 0x1f);
+        self.ppustatus &= !PPU::FLAG_VBLANK;
+        self.w = false;
+        res
+    }
+
+    pub fn write_oamaddr(&mut self, data: u8) {
+        self.oamaddr = data;
+    }
+
+    pub fn write_oamdata(&mut self, data: u8) {
+        if self.rendering { return }
+        unsafe {
+            let oam_raw = &mut transmute::<[Sprite; 64], [u8; 256]>(self.oam);
+            oam_raw[self.oamaddr as usize] = data;
+            self.oamaddr = self.oamaddr.wrapping_add(1);
+        }
+    }
+
+    pub fn read_oamdata(&self) -> u8 {
+        unsafe {
+            let oam_raw = &transmute::<[Sprite; 64], [u8; 256]>(self.oam);
+            oam_raw[self.oamaddr as usize]
+        }
+    }
+
+    pub fn write_scroll(&mut self, data: u8) {
+        let data = data as u16;
+        match self.w {
+            false => {
+                self.t = (self.t & 0x7fe0) | (data >> 3);
+                self.x = (data & 0x07) as u8;
+                self.w = true;
+            },
+            true => {
+                self.t = (self.t & 0x0c1f) | ((data & 0xf8) << 2) | ((data & 0x07) << 12);
+                self.w = false;
+            }
+        }
+    }
+
+    pub fn write_addr(&mut self, data: u8) {
+        let data = data as u16;
+        match self.w {
+            false => {
+                self.t = (self.t & 0x00ff) | ((data & 0x3f) << 8);
+                self.w = true;
+            },
+            true => {
+                self.t = (self.t & 0xff00) | data;
+                self.v = self.t;
+                self.w = false;
+            }
+        }
+    }
+
+    pub fn read_data(&mut self) -> u8 {
+        let data = self.mem.read(self.v);
+        let res = if self.v < 0x3f00 {
+            let prev = self.buffered_read;
+            self.buffered_read = data;
+            prev
+        } else {
+            self.buffered_read = self.mem.read(self.v - 0x1000);
+            data
+        };
+        self.v = self.v.wrapping_add(match self.get_vram_inc() {
+            0 => 1,
+            _ => 32
+        });
+        res
+    }
+
+    pub fn write_data(&mut self, data: u8) {
+        self.mem.write(self.v, data);
+        self.v = self.v.wrapping_add(match self.get_vram_inc() {
+            0 => 1,
+            _ => 32
+        });
+    }
+
+    pub fn write_oamdma(&mut self, data: u8, cpu: &mut CPU) {
+        let mut addr = (data as u16) << 8;
+        unsafe {
+            let oam_raw = &mut transmute::<[Sprite; 64], [u8; 256]>(self.oam);
+            for _ in 0..0x100 {
+                oam_raw[self.oamaddr as usize] = cpu.mem.read(addr);
+                addr = addr.wrapping_add(1);
+                self.oamaddr = self.oamaddr.wrapping_add(1);
+            }
+        }
+        cpu.cycle += 1;
+        cpu.cycle += cpu.cycle & 1;
+        cpu.cycle += 512;
+    }
+
     #[inline(always)] fn get_spritesize(&self) -> u8 {(self.ppuctl >> 5) & 1}
+    #[inline(always)] fn get_flag_nmi(&self) -> bool { (self.ppuctl >> 7) == 1 }
+    #[inline(always)] fn get_vram_inc(&self) -> u8 { (self.ppuctl >> 2) & 1}
+    #[inline(always)] fn get_show_leftmost_bg(&self) -> bool { (self.ppumask >> 1) & 1 == 1}
+    #[inline(always)] fn get_show_leftmost_sp(&self) -> bool { (self.ppumask >> 2) & 1 == 1}
+    #[inline(always)] fn get_show_bg(&self) -> bool { (self.ppumask >> 3) & 1 == 1}
+    #[inline(always)] fn get_show_sp(&self) -> bool { (self.ppumask >> 4) & 1 == 1}
+    const FLAG_OVERFLOW: u8 = 1 << 5;
+    const FLAG_SPRITE_ZERO: u8 = 1 << 6;
+    const FLAG_VBLANK: u8 = 1 << 7;
 
     #[inline(always)]
     fn fetch_nametable_byte(&mut self) {
@@ -88,6 +209,7 @@ impl<'a, 'b> PPU<'a, 'b> {
                                         (self.v >> 12) | 0x8);
     }
 
+    #[inline(always)]
     fn load_bgtile(&mut self) {
         /* load the tile bitmap to high 8 bits of bitmap,
          * assume the high 8 bits are zeros */
@@ -121,6 +243,7 @@ impl<'a, 'b> PPU<'a, 'b> {
         self.bg_palette[1] >>= d;
     }
 
+    #[inline(always)]
     fn wrapping_inc_cx(&mut self) {
         match self.v & 0x001f {
             31 => {
@@ -131,6 +254,7 @@ impl<'a, 'b> PPU<'a, 'b> {
         }
     }
 
+    #[inline(always)]
     fn wrapping_inc_y(&mut self) {
         match (self.v & 0x7000) == 0x7000 {
             false => self.v += 0x1000, /* fine y < 7 */
@@ -156,6 +280,7 @@ impl<'a, 'b> PPU<'a, 'b> {
         self.v = (self.v & !0x7be0u16) | (self.t & 0x7be0);
     }
 
+    #[inline(always)]
     fn clear_sprite(&mut self) {
         self.oam2 = [Sprite{y: 0xff, tile: 0xff, attr: 0xff, x: 0xff}; 8];
     }
@@ -185,11 +310,11 @@ impl<'a, 'b> PPU<'a, 'b> {
         }
         let mut m = 0;
         unsafe {
-            let oam_raw = transmute::<[Sprite; 64], [[u8; 4]; 64]>(self.oam);
+            let oam_raw = &transmute::<[Sprite; 64], [[u8; 4]; 64]>(self.oam);
             while n < 64 {
                 let y = oam_raw[n][m] as u16;
                 if y <= self.scanline && self.scanline < y + h {
-                    self.ppustatus |= 1 << 5; /* set overflow */
+                    self.ppustatus |= PPU::FLAG_OVERFLOW; /* set overflow */
                 } else {
                     m = (m + 1) & 3; /* emulates hardware bug */
                 }
@@ -198,6 +323,7 @@ impl<'a, 'b> PPU<'a, 'b> {
         }
     }
 
+    #[inline(always)]
     fn reverse_byte(mut x: u8) -> u8 {
         x = ((x & 0xaa) >> 1) | ((x & 0x55) << 1);
         x = ((x & 0xcc) >> 2) | ((x & 0x33) << 2);
@@ -234,23 +360,42 @@ impl<'a, 'b> PPU<'a, 'b> {
         }
     }
 
+    #[inline(always)]
+    fn get_bg_pidx(&self) -> u8 {
+        if self.get_show_bg() {
+            ((self.bg_bitmap[1] & 1) << 1) as u8 | (self.bg_bitmap[0] & 1) as u8
+        } else { 0 }
+    }
+
+    #[inline(always)] 
+    fn get_sp_pidx(&self, i: usize) -> u8 {
+        if self.get_show_sp() {
+            ((self.sp_bitmap[i][1] & 1) << 1) | (self.sp_bitmap[i][0] & 1)
+        } else { 0 }
+    }
+
     fn render_pixel(&mut self) {
-        let bg_pidx = ((self.bg_bitmap[1] & 1) << 1) | (self.bg_bitmap[0] & 1);
+        let x = self.cycle - 1;
+        let bg_pidx =
+            if x >= 8 || self.get_show_leftmost_bg() {self.get_bg_pidx()}
+            else {0};
         let mut sp_pidx = 0x0;
         let mut sp_idx = 0;
         let mut pri = 0x1;
-        for i in 0..8 {
-            if self.sp_cnt[i] != 0 { continue; } /* not active */
-            match ((self.sp_bitmap[i][1] & 1) << 1) | (self.sp_bitmap[i][0] & 1) {
-                0x0 => (),
-                pidx => {
-                    if self.sp_zero_insight && bg_pidx != 0 && i == 0 {
-                        self.ppustatus |= 1 << 6; /* set sprite zero hit */
+        if x >= 8 || self.get_show_leftmost_sp() {
+            for i in 0..8 {
+                if self.sp_cnt[i] != 0 { continue; } /* not active */
+                match self.get_sp_pidx(i) {
+                    0x0 => (),
+                    pidx => {
+                        if self.sp_zero_insight && bg_pidx != 0 && i == 0 {
+                            self.ppustatus |= PPU::FLAG_SPRITE_ZERO; /* set sprite zero hit */
+                        }
+                        sp_pidx = pidx;
+                        sp_idx = i;
+                        pri = (self.oam2[i].attr >> 5) & 1;
+                        break;
                     }
-                    sp_pidx = pidx;
-                    sp_idx = i;
-                    pri = (self.oam2[i].attr >> 5) & 1;
-                    break;
                 }
             }
         }
@@ -270,6 +415,50 @@ impl<'a, 'b> PPU<'a, 'b> {
                      });
     }
 
+    pub fn new(mem: &'a mut VMem, scr: &'a mut Screen) -> Self {
+        let ppuctl = 0x00;
+        let ppumask = 0x00;
+        let ppustatus = 0xa0;
+        let oamaddr = 0x00;
+        let w = false;
+        let buffered_read = 0x00;
+        let cycle = 370;
+        let scanline = 240;
+        PPU {
+            nametable_ram: [0; 2048],
+            palette_ram: [0; 32],
+            scanline,
+            ppuctl,
+            ppumask,
+            ppustatus,
+            oamaddr,
+            reg: 0,
+            x: 0, v: 0, t: 0, w, cycle,
+            bg_bitmap: [0; 2],
+            bg_palette: [0; 2],
+            bg_nt: 0, bg_attr: 0,
+            bg_bit_low: 0, bg_bit_high: 0,
+            oam: [Sprite{y: 0, tile: 0, attr: 0, x: 0}; 64],
+            oam2: [Sprite{y: 0, tile: 0, attr: 0, x: 0}; 8],
+            sp_bitmap: [[0; 2]; 8],
+            sp_cnt: [0; 8],
+            sp_zero_insight: false,
+            rendering: false,
+            buffered_read,
+            mem, scr
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.ppuctl = 0x00;
+        self.ppumask = 0x00;
+        self.ppustatus = self.ppustatus & 0x80;
+        self.w = false;
+        self.buffered_read = 0x00;
+        self.cycle = 370;
+        self.scanline = 240;
+    }
+
     pub fn tick(&mut self) -> bool {
         let cycle = self.cycle;
         if cycle == 0 {
@@ -278,17 +467,17 @@ impl<'a, 'b> PPU<'a, 'b> {
         }
         let visible = self.scanline < 240;
         let pre_render = self.scanline == 261;
-        let fill = pre_render || visible;
+        self.rendering = pre_render || visible;
         if pre_render {
             if cycle == 1 {
-                self.vblank = false;
-                /* clear sprite zero hit & overflow */
-                self.ppustatus &= !((1 << 6) | (1 << 5));
+                /* clear vblank, sprite zero hit & overflow */
+                self.ppustatus &= !(PPU::FLAG_VBLANK |
+                                    PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
             } else if 279 < cycle && cycle < 305 {
                 self.reset_y();
             }
         } 
-        if fill {
+        if self.rendering {
             let shifting = 0 < cycle && cycle < 257; /* 1..256 */
             let fetch = shifting || (320 < cycle && cycle < 337);
             if fetch { /* 1..256 and 321..336 */
@@ -336,9 +525,10 @@ impl<'a, 'b> PPU<'a, 'b> {
                 self.shift_sprites();
             }
         } else if self.scanline == 241 && cycle == 1 {
-            self.vblank = true;
+            self.scr.render();
+            self.ppustatus |= PPU::FLAG_VBLANK;
             self.cycle += 1;
-            return true /* trigger cpu's NMI */
+            return self.get_flag_nmi(); /* trigger cpu's NMI */
         }
         self.cycle += 1;
         if self.cycle > 340 {

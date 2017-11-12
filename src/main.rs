@@ -4,20 +4,24 @@ mod mos6502;
 mod ppu;
 mod cartridge;
 mod mapper;
-fn main() {
-    /*
-    let code = [0xa9, 0x01, 0x8d, 0x00, 0x02, 0xa9, 0x05, 0x8d, 0x01, 0x02, 0xa9, 0x08, 0x8d, 0x02, 0x02 ];
-    let code2 = [0xa9, 0x03, 0x4c, 0x08, 0x06, 0x00, 0x00, 0x00, 0x8d, 0x00, 0x02 ];
-    let dasm = mos6502::disasm::Disassembler::new(code2.iter());
-    for l in dasm {
-        println!("{}", l);
+use core::ptr::null_mut;
+
+struct Window {
+}
+
+impl ppu::Screen for Window {
+    fn put(&mut self, x: u8, y: u8, color: u8) {
+        println!("put color 0x{:02x} at ({}, {})", color, x, y);
     }
-    let a = 0x03;
-    let b = 0x4c;
-    let c = 0x08;
-    let d = 0x06;
-    println!("{}", disasm::parse(code2[0], &[a, b, c, d]));
-    */
-    let mut mem = memory::CPUMemory::new();
+    fn render(&self) {
+        println!("a frame has been redrawn");
+    }
+}
+
+fn main() {
+    //let mut ppu = ppu::PPU::new(
+    let mut cart = cartridge::Cartridge::new();
+    let mut mapper = mapper::Mapper2::new(&mut cart);
+    let mut mem = memory::CPUMemory::new(null_mut(), null_mut(), &mut mapper);
     let cpu = mos6502::CPU::new(&mut mem);
 }

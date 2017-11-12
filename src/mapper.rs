@@ -1,7 +1,8 @@
+#![allow(dead_code)]
 use memory::VMem;
 use cartridge::{Cartridge, BankType};
-pub struct Mapper2<'a, T: 'a> where T: Cartridge {
-    cart: &'a T,
+pub struct Mapper2<'a> {
+    cart: &'a Cartridge,
     prg_bank1: &'a [u8],
     prg_bank2: &'a [u8],
     chr_bank: &'a mut [u8],
@@ -9,7 +10,7 @@ pub struct Mapper2<'a, T: 'a> where T: Cartridge {
     bank_num: usize
 }
 
-impl<'a, T> VMem for Mapper2<'a, T> where T: Cartridge {
+impl<'a> VMem for Mapper2<'a> {
     fn read(&self, addr: u16) -> u8 {
         let addr = addr as usize;
         if addr < 0x2000 {
@@ -31,7 +32,7 @@ impl<'a, T> VMem for Mapper2<'a, T> where T: Cartridge {
             self.chr_bank[addr] = data;
         } else if addr >= 0x8000 {
             self.prg_bank1 = unsafe {&*self.cart.get_bank(
-                data as usize % self.bank_num, BankType::PRG_ROM)};
+                data as usize % self.bank_num, BankType::PrgRom)};
         } else if addr >= 0x6000 {
             self.sram[addr - 0x6000] = data;
         } else {
@@ -40,15 +41,15 @@ impl<'a, T> VMem for Mapper2<'a, T> where T: Cartridge {
     }
 }
 
-impl<'a, T> Mapper2<'a, T>  where T: Cartridge {
-    fn new(cart: &'a mut T) -> Self {
-        let bank_num = cart.get_bank_num(BankType::PRG_ROM);
+impl<'a> Mapper2<'a> {
+    pub fn new(cart: &'a mut Cartridge) -> Self {
+        let bank_num = cart.get_bank_num(BankType::PrgRom);
         unsafe {
             Mapper2{cart,
-                    prg_bank1: &*cart.get_bank(0, BankType::PRG_ROM),
-                    prg_bank2: &*cart.get_bank(bank_num - 1, BankType::PRG_ROM),
-                    chr_bank: &mut *cart.get_bank(0, BankType::CHR_ROM),
-                    sram: &mut *cart.get_bank(0, BankType::SRAM),
+                    prg_bank1: &*cart.get_bank(0, BankType::PrgRom),
+                    prg_bank2: &*cart.get_bank(bank_num - 1, BankType::PrgRom),
+                    chr_bank: &mut *cart.get_bank(0, BankType::ChrRom),
+                    sram: &mut *cart.get_bank(0, BankType::Sram),
                     bank_num}
         }
     }
