@@ -79,7 +79,7 @@ fn get_rgb(color: u8) -> Color {
 impl ppu::Screen for SDLWindow {
     fn put(&self, x: u8, y: u8, color: u8) {
         let mut canvas = self.canvas.borrow_mut();
-        println!("put {} at {}, {}", color, x, y);
+        //println!("put {} at {}, {}", color, x, y);
         canvas.set_draw_color(get_rgb(color));
         canvas.draw_rect(Rect::new((x as u32 * PIXEL_SIZE) as i32,
                                    (y as u32 * PIXEL_SIZE) as i32,

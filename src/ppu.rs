@@ -78,7 +78,7 @@ impl<'a> PPU<'a> {
     pub fn write_oamdata(&mut self, data: u8) {
         if self.rendering { return }
         unsafe {
-            let oam_raw = &mut transmute::<[Sprite; 64], [u8; 256]>(self.oam);
+            let oam_raw = transmute::<&mut[Sprite; 64], &mut[u8; 256]>(&mut self.oam);
             oam_raw[self.oamaddr as usize] = data;
             self.oamaddr = self.oamaddr.wrapping_add(1);
         }
@@ -86,7 +86,7 @@ impl<'a> PPU<'a> {
 
     pub fn read_oamdata(&self) -> u8 {
         unsafe {
-            let oam_raw = &transmute::<[Sprite; 64], [u8; 256]>(self.oam);
+            let oam_raw = transmute::<&[Sprite; 64], &[u8; 256]>(&self.oam);
             oam_raw[self.oamaddr as usize]
         }
     }
@@ -149,7 +149,7 @@ impl<'a> PPU<'a> {
     pub fn write_oamdma(&mut self, data: u8, cpu: &mut CPU) {
         let mut addr = (data as u16) << 8;
         unsafe {
-            let oam_raw = &mut transmute::<[Sprite; 64], [u8; 256]>(self.oam);
+            let oam_raw = transmute::<&mut[Sprite; 64], &mut[u8; 256]>(&mut self.oam);
             for _ in 0..0x100 {
                 oam_raw[self.oamaddr as usize] = cpu.mem.read(addr);
                 addr = addr.wrapping_add(1);
@@ -292,6 +292,7 @@ impl<'a> PPU<'a> {
         /* we use scanline here because s.y is the (actual y) - 1 */
         let mut nidx = 0;
         let mut n = 0;
+        let scanline = self.scanline;
         let h = match self.get_spritesize() {
             0 => 8,
             _ => 16
@@ -299,7 +300,7 @@ impl<'a> PPU<'a> {
         self.sp_zero_insight = false;
         for (i, s) in self.oam.iter().enumerate() {
             let y = s.y as u16;
-            if y <= self.scanline && self.scanline < y + h {
+            if y <= scanline && scanline < y + h {
                 if nidx == 0 {
                     self.sp_zero_insight = true;
                 }
@@ -313,10 +314,10 @@ impl<'a> PPU<'a> {
         }
         let mut m = 0;
         unsafe {
-            let oam_raw = &transmute::<[Sprite; 64], [[u8; 4]; 64]>(self.oam);
+            let oam_raw = transmute::<&[Sprite; 64], &[[u8; 4]; 64]>(&self.oam);
             while n < 64 {
                 let y = oam_raw[n][m] as u16;
-                if y <= self.scanline && self.scanline < y + h {
+                if y <= scanline && scanline < y + h {
                     self.ppustatus |= PPU::FLAG_OVERFLOW; /* set overflow */
                 } else {
                     m = (m + 1) & 3; /* emulates hardware bug */
@@ -379,7 +380,7 @@ impl<'a> PPU<'a> {
     }
 
     fn render_pixel(&mut self) {
-        println!("ppuctl:{} ppumask:{}", self.ppuctl, self.ppumask);
+        //println!("ppuctl:{} ppumask:{}", self.ppuctl, self.ppumask);
         let x = self.cycle - 1;
         let bg_pidx =
             if x >= 8 || self.get_show_leftmost_bg() {self.get_bg_pidx()}
@@ -443,7 +444,7 @@ impl<'a> PPU<'a> {
             bg_nt: 0, bg_attr: 0,
             bg_bit_low: 0, bg_bit_high: 0,
             oam: [Sprite{y: 0, tile: 0, attr: 0, x: 0}; 64],
-            oam2: [Sprite{y: 0, tile: 0, attr: 0, x: 0}; 8],
+            oam2: [Sprite{y: 0xff, tile: 0xff, attr: 0xff, x: 0xff}; 8],
             sp_bitmap: [[0; 2]; 8],
             sp_cnt: [0; 8],
             sp_zero_insight: false,
@@ -467,6 +468,10 @@ impl<'a> PPU<'a> {
         let cycle = self.cycle;
         if cycle == 0 {
             self.cycle = cycle + 1;
+            self.bg_bitmap[0] = 0;
+            self.bg_bitmap[1] = 0;
+            self.bg_palette[0] = 0;
+            self.bg_palette[1] = 0;
             return false;
         }
         let visible = self.scanline < 240;
@@ -498,7 +503,7 @@ impl<'a> PPU<'a> {
                     0 => self.wrapping_inc_cx(),
                     _ => ()
                 }
-                if !pre_render {
+                if visible {
                     match cycle {
                         1 => self.clear_sprite(), /* clear secondary OAM */
                         65 => self.eval_sprite(), /* sprite evaluation */
@@ -520,7 +525,9 @@ impl<'a> PPU<'a> {
                      * from the secondary OAM which is not subject to any change during this
                      * scanline */
                     self.reset_cx();
-                    self.fetch_sprite();
+                    if visible {
+                        self.fetch_sprite();
+                    }
                 }
             }
             if shifting {
