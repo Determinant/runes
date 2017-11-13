@@ -43,8 +43,9 @@ pub struct PPU<'a> {
     bg_bit_high: u8,
     /* sprites */
     oam: [Sprite; 64],
-    oam2: [Sprite; 8],
+    oam2: [usize; 8],
     sp_bitmap: [[u8; 2]; 8],
+    sp_idx: [usize; 8],
     sp_cnt: [u8; 8],
     sp_zero_insight: bool,
     rendering: bool,
@@ -224,7 +225,7 @@ impl<'a> PPU<'a> {
     #[inline(always)]
     fn shift_sprites(&mut self) {
         for (i, c) in self.sp_cnt.iter_mut().enumerate() {
-            if self.oam2[i].y == 0xff { break }
+            if self.sp_idx[i] > 0xff { break }
             let c0 = *c;
             match c0 {
                 0 => {
@@ -286,7 +287,7 @@ impl<'a> PPU<'a> {
 
     #[inline(always)]
     fn clear_sprite(&mut self) {
-        self.oam2 = [Sprite{y: 0xff, tile: 0xff, attr: 0xff, x: 0xff}; 8];
+        self.oam2 = [0x100; 8];
     }
 
     fn eval_sprite(&mut self) {
@@ -305,7 +306,7 @@ impl<'a> PPU<'a> {
                 if nidx == 0 {
                     self.sp_zero_insight = true;
                 }
-                self.oam2[nidx] = *s;
+                self.oam2[nidx] = i;
                 nidx += 1;
                 if nidx == 8 {
                     n = i + 1;
@@ -338,8 +339,11 @@ impl<'a> PPU<'a> {
 
     fn fetch_sprite(&mut self) {
         /* we use scanline here because s.y is the (actual y) - 1 */
-        for (i, s) in self.oam2.iter().enumerate() {
-            if s.y == 0xff { break }
+        self.sp_idx = [0x100; 8];
+        for (i, v) in self.oam2.iter().enumerate() {
+            let j = *v;
+            if j > 0xff { break }
+            let s = &self.oam[j];
             let vflip = (s.attr & 0x80) == 0x80;
             let y0 = self.scanline - s.y as u16;
             let (ptable, tidx, y) = match self.get_spritesize() {
@@ -348,12 +352,14 @@ impl<'a> PPU<'a> {
                     ((self.ppuctl as u16 & 0x08) << 9, s.tile, y)
                 },
                 _ => {
+                    assert!(false);
                     let y = if vflip {15 - y0 as u8} else {y0 as u8};
                     ((s.tile as u16 & 1) << 12,
                      (s.tile & !1u8) | (y >> 3),
                      y & 0x7)
                 }
             };
+            self.sp_idx[i] = j;
             self.sp_cnt[i] = s.x;
             let mut low = self.mem.read(ptable | ((tidx as u16) << 4) | 0x0 | y as u16);
             let mut high = self.mem.read(ptable | ((tidx as u16) << 4) | 0x8 | y as u16);
@@ -387,11 +393,12 @@ impl<'a> PPU<'a> {
             if x >= 8 || self.get_show_leftmost_bg() {self.get_bg_pidx()}
             else {0};
         let mut sp_pidx = 0x0;
-        let mut sp_idx = 0;
+        let mut sp_id = 0;
         let mut pri = 0x1;
         if x >= 8 || self.get_show_leftmost_sp() {
             for i in 0..8 {
-                if self.oam2[i].y == 0xff { break }
+                if self.sp_idx[i] > 0xff { break }
+                let s = &self.oam[self.sp_idx[i]];
                 if self.sp_cnt[i] != 0 { continue; } /* not active */
                 match self.get_sp_pidx(i) {
                     0x0 => (),
@@ -400,8 +407,8 @@ impl<'a> PPU<'a> {
                             self.ppustatus |= PPU::FLAG_SPRITE_ZERO; /* set sprite zero hit */
                         }
                         sp_pidx = pidx;
-                        sp_idx = i;
-                        pri = (self.oam2[i].attr >> 5) & 1;
+                        sp_id = i;
+                        pri = (s.attr >> 5) & 1;
                         break;
                     }
                 }
@@ -413,7 +420,7 @@ impl<'a> PPU<'a> {
                      self.scanline as u8,
                      if (pri == 0 || bg_pidx == 0) && sp_pidx != 0 {
                         self.mem.read(0x3f10 |
-                                      ((self.oam2[sp_idx].attr & 3) << 2) as u16 |
+                                      ((self.oam[self.sp_idx[sp_id]].attr & 3) << 2) as u16 |
                                       sp_pidx as u16)
                      } else {
                         self.mem.read(0x3f00 |
@@ -445,7 +452,8 @@ impl<'a> PPU<'a> {
             bg_nt: 0, bg_attr: 0,
             bg_bit_low: 0, bg_bit_high: 0,
             oam: [Sprite{y: 0, tile: 0, attr: 0, x: 0}; 64],
-            oam2: [Sprite{y: 0xff, tile: 0xff, attr: 0xff, x: 0xff}; 8],
+            oam2: [0x100; 8],
+            sp_idx: [0x100; 8],
             sp_bitmap: [[0; 2]; 8],
             sp_cnt: [0; 8],
             sp_zero_insight: false,

@@ -75,7 +75,7 @@ impl SDLWindow {
     }
 }
 
-const PIXEL_SIZE: u32 = 2;
+const PIXEL_SIZE: u32 = 4;
 const COLORS: [u32; 64] = [
     0x666666, 0x002A88, 0x1412A7, 0x3B00A4, 0x5C007E, 0x6E0040, 0x6C0600, 0x561D00,
     0x333500, 0x0B4800, 0x005200, 0x004F08, 0x00404D, 0x000000, 0x000000, 0x000000,
@@ -95,7 +95,7 @@ fn get_rgb(color: u8) -> Color {
 impl ppu::Screen for SDLWindow {
     fn put(&self, x: u8, y: u8, color: u8) {
         let mut canvas = self.canvas.borrow_mut();
-        //println!("put {} at {}, {}", color, x, y);
+        println!("put {} at {}, {}", color, x, y);
         canvas.set_draw_color(get_rgb(color));
         canvas.draw_rect(Rect::new((x as u32 * PIXEL_SIZE) as i32,
                                    (y as u32 * PIXEL_SIZE) as i32,
@@ -105,6 +105,7 @@ impl ppu::Screen for SDLWindow {
     fn render(&self) {
         let mut canvas = self.canvas.borrow_mut();
         canvas.present();
+        canvas.set_draw_color(Color::RGB(128, 128, 128));
         canvas.clear();
     }
 }
