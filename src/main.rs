@@ -16,6 +16,8 @@ extern crate sdl2;
 
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
+use sdl2::event::Event;
+use sdl2::keyboard::Keycode;
 
 struct Window {
     buff: RefCell<[[u8; 256]; 240]>
@@ -37,7 +39,8 @@ impl ppu::Screen for Window {
 }
 
 struct SDLWindow {
-    canvas: RefCell<sdl2::render::WindowCanvas>
+    canvas: RefCell<sdl2::render::WindowCanvas>,
+    events: RefCell<sdl2::EventPump>,
 }
 
 impl SDLWindow {
@@ -54,8 +57,21 @@ impl SDLWindow {
         canvas.clear();
         canvas.present();
         SDLWindow {
-            canvas: RefCell::new(canvas)
+            canvas: RefCell::new(canvas),
+            events: RefCell::new(sdl_context.event_pump().unwrap())
         }
+    }
+
+    fn poll(&self) -> bool {
+        for event in self.events.borrow_mut().poll_iter() {
+            match event {
+                Event::Quit {..} | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                    return true;
+                },
+                _ => ()
+            }
+        }
+        false
     }
 }
 
@@ -169,6 +185,7 @@ fn main() {
     mem.init(&mut cpu, &mut ppu);
 
     loop {
+        if win.poll() {break}
         cpu.step();
         //println!("cpu at 0x{:04x}", cpu.get_pc());
         while cpu.cycle > 0 {
