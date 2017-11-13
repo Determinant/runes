@@ -24,22 +24,22 @@ macro_rules! make_optable {
 
 macro_rules! make_addrtable {
     ($x:ident, $t: ty) => (pub const $x: [$t; 0x100] = [
-       nil, xin, nil, nil, nil, zpg, zpg, nil, nil, imm, acc, nil, nil, abs, abs, nil,
-       rel, iny, nil, nil, nil, zpx, zpx, nil, nil, aby, nil, nil, nil, abx, abx, nil,
-       abs, xin, nil, nil, zpg, zpg, zpg, nil, nil, imm, acc, nil, abs, abs, abs, nil,
-       rel, iny, nil, nil, nil, zpx, zpx, nil, nil, aby, nil, nil, nil, abx, abx, nil,
-       nil, xin, nil, nil, nil, zpg, zpg, nil, nil, imm, acc, nil, abs, abs, abs, nil,
-       rel, iny, nil, nil, nil, zpx, zpx, nil, nil, aby, nil, nil, nil, abx, abx, nil,
-       nil, xin, nil, nil, nil, zpg, zpg, nil, nil, imm, acc, nil, ind, abs, abs, nil,
-       rel, iny, nil, nil, nil, zpx, zpx, nil, nil, aby, nil, nil, nil, abx, abx, nil,
-       nil, xin, nil, nil, zpg, zpg, zpg, nil, nil, nil, nil, nil, abs, abs, abs, nil,
-       rel, iny, nil, nil, zpx, zpx, zpy, nil, nil, aby, nil, nil, nil, abx, nil, nil,
-       imm, xin, imm, nil, zpg, zpg, zpg, nil, nil, imm, nil, nil, abs, abs, abs, nil,
-       rel, iny, nil, nil, zpx, zpx, zpy, nil, nil, aby, nil, nil, abx, abx, aby, nil,
-       imm, xin, nil, nil, zpg, zpg, zpg, nil, nil, imm, nil, nil, abs, abs, abs, nil,
-       rel, iny, nil, nil, nil, zpx, zpx, nil, nil, aby, nil, nil, nil, abx, abx, nil,
-       imm, xin, nil, nil, zpg, zpg, zpg, nil, nil, imm, nil, nil, abs, abs, abs, nil,
-       rel, iny, nil, nil, nil, zpx, zpx, nil, nil, aby, nil, nil, nil, abx, abx, nil
+        nil, xin, nil, xin, zpg, zpg, zpg, zpg, nil, imm, acc, imm, abs, abs, abs, abs,
+        rel, iny, nil, iny, zpx, zpx, zpx, zpx, nil, aby, nil, aby, abx, abx, abx, abx,
+        abs, xin, nil, xin, zpg, zpg, zpg, zpg, nil, imm, acc, imm, abs, abs, abs, abs,
+        rel, iny, nil, iny, zpx, zpx, zpx, zpx, nil, aby, nil, aby, abx, abx, abx, abx,
+        nil, xin, nil, xin, zpg, zpg, zpg, zpg, nil, imm, acc, imm, abs, abs, abs, abs,
+        rel, iny, nil, iny, zpx, zpx, zpx, zpx, nil, aby, nil, aby, abx, abx, abx, abx,
+        nil, xin, nil, xin, zpg, zpg, zpg, zpg, nil, imm, acc, imm, ind, abs, abs, abs,
+        rel, iny, nil, iny, zpx, zpx, zpx, zpx, nil, aby, nil, aby, abx, abx, abx, abx,
+        imm, xin, imm, xin, zpg, zpg, zpg, zpg, nil, imm, nil, imm, abs, abs, abs, abs,
+        rel, iny, nil, iny, zpx, zpx, zpy, zpy, nil, aby, nil, aby, abx, abx, aby, aby,
+        imm, xin, imm, xin, zpg, zpg, zpg, zpg, nil, imm, nil, imm, abs, abs, abs, abs,
+        rel, iny, nil, iny, zpx, zpx, zpy, zpy, nil, aby, nil, aby, abx, abx, aby, aby,
+        imm, xin, imm, xin, zpg, zpg, zpg, zpg, nil, imm, nil, imm, abs, abs, abs, abs,
+        rel, iny, nil, iny, zpx, zpx, zpx, zpx, nil, aby, nil, aby, abx, abx, abx, abx,
+        imm, xin, imm, xin, zpg, zpg, zpg, zpg, nil, imm, nil, imm, abs, abs, abs, abs,
+        rel, iny, nil, iny, zpx, zpx, zpx, zpx, nil, aby, nil, aby, abx, abx, abx, abx,
     ];);
 }
 
@@ -542,7 +542,7 @@ mod ops {
         ($f: ident, $from: ident, $to: ident) => (fn $f(cpu: &mut CPU) {
             let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
             let res = cpu.$from;
-            cpu.$to = res; 
+            cpu.$to = res;
             check_zero!(status, res);
             check_neg!(status, res);
             cpu.status = status;

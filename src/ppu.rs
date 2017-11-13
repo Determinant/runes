@@ -97,6 +97,7 @@ impl<'a> PPU<'a> {
             false => {
                 self.t = (self.t & 0x7fe0) | (data >> 3);
                 self.x = (data & 0x07) as u8;
+                assert!(self.x == 0);
                 self.w = true;
             },
             true => {
@@ -123,7 +124,7 @@ impl<'a> PPU<'a> {
 
     pub fn read_data(&mut self) -> u8 {
         let data = self.mem.read(self.v);
-        let res = if self.v < 0x3f00 {
+        let res = if self.v & 0x3fff < 0x3f00 {
             let prev = self.buffered_read;
             self.buffered_read = data;
             prev
@@ -372,7 +373,7 @@ impl<'a> PPU<'a> {
         } else { 0 }
     }
 
-    #[inline(always)] 
+    #[inline(always)]
     fn get_sp_pidx(&self, i: usize) -> u8 {
         if self.get_show_sp() {
             ((self.sp_bitmap[i][1] & 1) << 1) | (self.sp_bitmap[i][0] & 1)
