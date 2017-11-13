@@ -1,27 +1,35 @@
+#![allow(dead_code)]
 use ppu::PPU;
 use mos6502::CPU;
 use cartridge::{MirrorType, Cartridge};
-use core::cell::{RefCell, RefMut};
+use core::cell::{RefCell, Cell};
+use core::ptr::null_mut;
 
 pub trait VMem {
     fn read(&self, addr: u16) -> u8;
-    fn write(&mut self, addr: u16, data: u8);
+    fn write(&self, addr: u16, data: u8);
 }
 
 pub struct CPUMemory<'a> {
-    internal: [u8; 2048],
-    ppu: *mut PPU<'a>,
-    cpu: *mut CPU<'a>,
-    mapper: &'a mut VMem
+    sram: RefCell<[u8; 2048]>,
+    ppu: Cell<*mut PPU<'a>>,
+    cpu: Cell<*mut CPU<'a>>,
+    mapper: &'a VMem
 }
 
 impl<'a> CPUMemory<'a> {
-    pub fn new(cpu: *mut CPU<'a>,
-               ppu: *mut PPU<'a>,
-               mapper: &'a mut VMem) -> Self {
-        CPUMemory{internal: [0; 2048],
-                  cpu, ppu,
+    pub fn new(mapper: &'a VMem) -> Self {
+        CPUMemory{sram: RefCell::new([0; 2048]),
+                  cpu: Cell::new(null_mut()),
+                  ppu: Cell::new(null_mut()),
                   mapper}
+    }
+
+    pub fn init(&self,
+               cpu: *mut CPU<'a>,
+               ppu: *mut PPU<'a>) {
+        self.cpu.set(cpu);
+        self.ppu.set(ppu);
     }
 }
 
@@ -29,16 +37,16 @@ impl<'a> VMem for CPUMemory<'a> {
     fn read(&self, addr: u16) -> u8 {
         match addr {
             _ => if addr < 0x2000 {
-                self.internal[(addr & 0x07ff) as usize]
+                self.sram.borrow()[(addr & 0x07ff) as usize]
             } else if addr < 0x4000 {
-                let ppu = unsafe {&mut *self.ppu};
+                let ppu = unsafe {&mut *self.ppu.get()};
                 match addr & 0x7 {
                     0x2 => ppu.read_status(),
                     0x4 => ppu.read_oamdata(),
                     0x7 => ppu.read_data(),
-                    _ => panic!("invalid ppu reg read access at 0x{:04x}", addr)
+                    _ => 0
                 }
-            } else if addr < 0x4020 {
+            } else if addr < 0x6000 {
                 println!("feeding dummy data for 0x{:04x}", addr);
                 0
             } else {
@@ -46,11 +54,11 @@ impl<'a> VMem for CPUMemory<'a> {
             }
         }
     }
-    fn write(&mut self, addr: u16, data: u8) {
-            let ppu = unsafe {&mut *self.ppu};
-            let cpu = unsafe {&mut *self.cpu};
+    fn write(&self, addr: u16, data: u8) {
+            let ppu = unsafe {&mut *self.ppu.get()};
+            let cpu = unsafe {&mut *self.cpu.get()};
             if addr < 0x2000 {
-                self.internal[(addr & 0x07ff) as usize] = data;
+                self.sram.borrow_mut()[(addr & 0x07ff) as usize] = data;
             } else if addr < 0x4000 {
                 match addr & 0x7 {
                     0x0 => ppu.write_ctl(data),
@@ -67,6 +75,7 @@ impl<'a> VMem for CPUMemory<'a> {
                     0x4014 => ppu.write_oamdma(data, cpu),
                     _ => println!("ignore writing for 0x{:04x}", addr)
                 }
+            } else if addr < 0x6000 {
             } else {
                 self.mapper.write(addr, data)
             }
@@ -74,20 +83,20 @@ impl<'a> VMem for CPUMemory<'a> {
 }
 
 pub struct PPUMemory<'a> {
-    pattern_table: [u8; 0x2000],
-    nametable: [u8; 0x1000],
-    palette: [u8; 0x20],
+    pattern_table: RefCell<[u8; 0x2000]>,
+    nametable: RefCell<[u8; 0x1000]>,
+    palette: RefCell<[u8; 0x20]>,
     cart: &'a Cartridge,
-    mapper: &'a mut VMem,
+    mapper: &'a VMem,
 }
 
 impl<'a> PPUMemory<'a> {
-    pub fn new(mapper: &'a mut VMem,
+    pub fn new(mapper: &'a VMem,
                cart: &'a Cartridge) -> Self {
         PPUMemory{
-            pattern_table: [0; 0x2000],
-            nametable: [0; 0x1000],
-            palette: [0; 0x20],
+            pattern_table: RefCell::new([0; 0x2000]),
+            nametable: RefCell::new([0; 0x1000]),
+            palette: RefCell::new([0; 0x20]),
             cart,
             mapper}
     }
@@ -115,31 +124,36 @@ fn mirror_palette(addr: u16) -> u16 {
 }
 
 impl<'a> VMem for PPUMemory<'a> {
-    fn read(&self, addr: u16) -> u8 {
+    fn read(&self, mut addr: u16) -> u8 {
+        addr &= 0x3fff;
         if addr < 0x2000 {
-            //self.pattern_table[addr as usize]
             self.mapper.read(addr)
         } else if addr < 0x3f00 {
             let kind = self.cart.mirror_type;
-            self.nametable[(get_mirror_addr(kind, addr) & 0x07ff) as usize]
+            self.nametable.borrow()
+                [(get_mirror_addr(kind, addr) & 0x07ff) as usize]
         } else if addr < 0x4000 {
-            self.palette[mirror_palette(addr & 0x1f) as usize]
+            self.palette.borrow()
+                [mirror_palette(addr & 0x1f) as usize]
         } else {
             panic!("invalid ppu read access at 0x{:04x}", addr)
         }
     }
 
-    fn write(&mut self, addr: u16, data: u8) {
+    fn write(&self, mut addr: u16, data: u8) {
+        addr &= 0x3fff;
+        println!("writing 0x{:02x} to 0x{:04x}", data, addr);
         if addr < 0x2000 {
-            //self.pattern_table[addr as usize] = data
             self.mapper.write(addr, data)
         } else if addr < 0x3f00 {
             let kind = self.cart.mirror_type;
-            self.nametable[(get_mirror_addr(kind, addr) & 0x07ff) as usize] = data
+            self.nametable.borrow_mut()
+                [(get_mirror_addr(kind, addr) & 0x07ff) as usize] = data
         } else if addr < 0x4000 {
-            self.palette[mirror_palette(addr & 0x1f) as usize] = data
+            self.palette.borrow_mut()
+                [mirror_palette(addr & 0x1f) as usize] = data
         } else {
-            panic!("invalid ppu read access at 0x{:04x}", addr)
+            panic!("invalid ppu write access at 0x{:04x}", addr)
         }
     }
 

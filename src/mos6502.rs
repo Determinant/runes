@@ -132,7 +132,7 @@ pub mod disasm {
             format!("${:02x}, y", code.next().unwrap())
         }
         fn rel(code: T) -> String {
-            let b = *code.next().unwrap() as i8;
+            let b = *code.next().unwrap() as i8 as i16;
             if b >= 0 {
                 format!("+${:02x}, x", b)
             } else {
@@ -229,10 +229,9 @@ mod ops {
         let opr1 = cpu.a as u16;
         let opr2 = match cpu.addr_mode {
                     AddrMode::Immediate => cpu.imm_val,
-                    AddrMode::Accumulator => cpu.a,
-                    AddrMode::EffAddr => cpu.mem.read(cpu.ea)
+                    _ => cpu.mem.read(cpu.ea)
                     } as u16;
-        let res = opr1 + opr2 + cpu.get_carry() as u16;
+        let res = opr1 + opr2 + (cpu.get_carry() as u16);
         let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | OVER_FLAG | NEG_FLAG);
         cpu.a = res as u8;
         status |= (res > 0xff) as u8; /* carry flag */
@@ -248,10 +247,9 @@ mod ops {
         let opr1 = cpu.a as u16;
         let opr2 = match cpu.addr_mode {
                     AddrMode::Immediate => cpu.imm_val,
-                    AddrMode::Accumulator => cpu.a,
-                    AddrMode::EffAddr => cpu.mem.read(cpu.ea)
+                    _ => cpu.mem.read(cpu.ea)
                     } as u16;
-        let res = opr1 + (0xff - opr2) + cpu.get_carry() as u16;
+        let res = opr1 + (0xff - opr2) + (cpu.get_carry() as u16);
         let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | OVER_FLAG | NEG_FLAG);
         cpu.a = res as u8;
         status |= (res > 0xff) as u8; /* carry flag */
@@ -269,9 +267,9 @@ mod ops {
                         AddrMode::Immediate => cpu.imm_val,
                         _ => cpu.mem.read(cpu.ea)
                         } as u16;
-            let res = opr1 - opr2;
+            let res = opr1.wrapping_sub(opr2);
             let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
-            status |= (res < 0x100) as u8; /* carry flag */
+            status |= (res < 0x100) as u8; /* if opr1 >= opr2 */
             check_zero!(status, res);
             check_neg!(status, res);
             cpu.status = status;
@@ -286,16 +284,16 @@ mod ops {
     macro_rules! make_delta {
         ($f: ident, $d: expr) => (
             fn $f(cpu: &mut CPU) {
-                let res = cpu.mem.read(cpu.ea) as u16 + $d;
+                let res = cpu.mem.read(cpu.ea).wrapping_add($d);
                 let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
-                cpu.mem.write(cpu.ea, res as u8);
+                cpu.mem.write(cpu.ea, res);
                 check_zero!(status, res);
                 check_neg!(status, res);
                 cpu.status = status;
             });
         ($f: ident, $d: expr, $r: ident) => (
             fn $f(cpu: &mut CPU) {
-                let res = cpu.$r as u16 + $d;
+                let res = cpu.$r.wrapping_add($d);
                 let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
                 cpu.$r = res as u8;
                 check_zero!(status, res);
@@ -514,8 +512,11 @@ mod ops {
     macro_rules! make_ld {
         ($f: ident, $r: ident) => (fn $f(cpu: &mut CPU) {
             let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
-            let res = cpu.mem.read(cpu.ea);
-            cpu.a = res;
+            let res = match cpu.addr_mode {
+                AddrMode::Immediate => cpu.imm_val,
+                _ => cpu.mem.read(cpu.ea)
+            };
+            cpu.$r = res;
             check_zero!(status, res);
             check_neg!(status, res);
             cpu.status = status;
@@ -612,20 +613,20 @@ mod addr {
     fn zpx(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
         cpu.ea = (cpu.mem.read(cpu.opr)
-                        .wrapping_add(cpu.x)) as u16;
+                         .wrapping_add(cpu.x)) as u16;
     }
 
     fn zpy(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
         cpu.ea = (cpu.mem.read(cpu.opr)
-                        .wrapping_add(cpu.y)) as u16;
+                         .wrapping_add(cpu.y)) as u16;
     }
 
     fn rel(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
         let base = cpu.pc;
         let offset = cpu.mem.read(cpu.opr) as i8 as i16;
-        let sum = (base & 0xff) + offset as u16;
+        let sum = ((base & 0xff) as i16 + offset) as u16;
         cpu.ea = (base & 0xff00).wrapping_add(sum);
         cpu.cycle += (sum >> 8) as u32;
     }
@@ -638,7 +639,7 @@ mod addr {
     fn abx(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
         let base = read16!(cpu.mem, cpu.opr);
-        let sum = (base & 0xff) + cpu.x as u16;
+        let sum = (base & 0xff) + (cpu.x as u16);
         cpu.ea = (base & 0xff00).wrapping_add(sum);
         cpu.cycle += (sum >> 8) as u32; /* boundary cross if carry */
     }
@@ -646,7 +647,7 @@ mod addr {
     fn aby(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
         let base = read16!(cpu.mem, cpu.opr);
-        let sum = (base & 0xff) + cpu.y as u16;
+        let sum = (base & 0xff) + (cpu.y as u16);
         cpu.ea = (base & 0xff00).wrapping_add(sum);
         cpu.cycle += (sum >> 8) as u32; /* boundary cross if carry */
     }
@@ -659,17 +660,15 @@ mod addr {
 
     fn xin(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
-        let addr = cpu.mem.read(
-                    cpu.mem.read(cpu.opr)
-                        .wrapping_add(cpu.x) as u16) as u16;
-        cpu.ea = read16!(cpu.mem, addr);
+        cpu.ea = read16!(cpu.mem,
+                         cpu.mem.read(cpu.opr)
+                                .wrapping_add(cpu.x) as u16) as u16;
     }
 
     fn iny(cpu: &mut CPU) {
         cpu.addr_mode = AddrMode::EffAddr;
-        let addr = cpu.mem.read(cpu.mem.read(cpu.opr) as u16) as u16;
-        let base = read16!(cpu.mem, addr);
-        let sum = (base & 0xff) + cpu.y as u16;
+        let base = read16!(cpu.mem, cpu.mem.read(cpu.opr) as u16);
+        let sum = (base & 0xff) + (cpu.y as u16);
         cpu.ea = (base & 0xff00).wrapping_add(sum);
         cpu.cycle += (sum >> 8) as u32; /* boundary cross if carry */
     }
@@ -703,7 +702,7 @@ pub struct CPU<'a> {
     imm_val: u8,
     pub cycle: u32,
     int: Option<IntType>,
-    pub mem: &'a mut VMem
+    pub mem: &'a VMem
 }
 
 macro_rules! make_int {
@@ -728,7 +727,7 @@ impl<'a> CPU<'a> {
     #[inline(always)] pub fn get_over(&self) -> u8 { (self.status >> 6) & 1 }
     #[inline(always)] pub fn get_neg(&self) -> u8 { (self.status >> 7) & 1 }
 
-    pub fn new(mem: &'a mut VMem) -> Self {
+    pub fn new(mem: &'a VMem) -> Self {
         let pc = read16!(mem, RESET_VECTOR as u16);
         /* nes power up state */
         let a = 0;
@@ -750,14 +749,21 @@ impl<'a> CPU<'a> {
     make_int!(irq, IRQ_VECTOR);
 
     pub fn step(&mut self) {
-        let pc = self.pc;
         match self.int {
             Some(IntType::NMI) => self.nmi(),
             Some(IntType::IRQ) => self.irq(),
             _ => ()
         }
         self.int = None;
+        let pc = self.pc;
         let opcode = self.mem.read(pc) as usize;
+        let len = INST_LENGTH[opcode];
+        let mut code = vec![0; len as usize];
+        for i in 0..len as u16 {
+            code[i as usize] = self.mem.read(pc + i);
+        }
+        println!("0x{:04x} {} a:{} x:{} y:{}",
+                 pc, disasm::parse(opcode as u8, &code[1..]), self.a, self.x, self.y);
         /* update opr pointing to operands of current inst */
         self.opr = pc.wrapping_add(1);
         /* update program counter pointing to next inst */
@@ -769,16 +775,7 @@ impl<'a> CPU<'a> {
         self.cycle += INST_CYCLE[opcode] as u32;
     }
 
-    pub fn powerup(&mut self) {
-        self.pc = read16!(self.mem, RESET_VECTOR as u16);
-        /* nes power up state */
-        self.a = 0;
-        self.x = 0;
-        self.y = 0;
-        self.sp = 0xfd;
-        self.status = 0x34;
-        self.cycle = 0;
-    }
+    pub fn get_pc(&self) -> u16 { self.pc }
 
     pub fn reset(&mut self) {
         self.pc = read16!(self.mem, RESET_VECTOR as u16);

@@ -4,7 +4,7 @@ use mos6502::CPU;
 use core::intrinsics::transmute;
 
 pub trait Screen {
-    fn put(&mut self, x: u8, y: u8, color: u8);
+    fn put(&self, x: u8, y: u8, color: u8);
     fn render(&self);
 }
 
@@ -18,9 +18,6 @@ struct Sprite {
 }
 
 pub struct PPU<'a> {
-    /* internal srams */
-    nametable_ram: [u8; 2048],
-    palette_ram: [u8; 32],
     scanline: u16,
     /* registers */
     ppuctl: u8,
@@ -38,7 +35,7 @@ pub struct PPU<'a> {
     /* rendering regs & latches */
         /* background registers */
     bg_bitmap: [u16; 2],
-    bg_palette: [u8; 2],
+    bg_palette: [u16; 2],
         /* background latches */
     bg_nt: u8,
     bg_attr: u8,
@@ -53,8 +50,8 @@ pub struct PPU<'a> {
     rendering: bool,
     buffered_read: u8,
     /* IO */
-    mem: &'a mut VMem,
-    scr: &'a mut Screen,
+    mem: &'a VMem,
+    scr: &'a Screen,
 }
 
 impl<'a> PPU<'a> {
@@ -196,7 +193,7 @@ impl<'a> PPU<'a> {
                                         /* 0x-??0 */
                                         ((self.bg_nt as u16) << 4) |
                                         /* 0x---? (0 - 7) */
-                                        (self.v >> 12) | 0x0);
+                                        ((self.v >> 12) & 7) | 0x0);
     }
 
     #[inline(always)]
@@ -206,7 +203,7 @@ impl<'a> PPU<'a> {
                                         /* 0x-??0 */
                                         ((self.bg_nt as u16) << 4) |
                                         /* 0x---? (8 - f) */
-                                        (self.v >> 12) | 0x8);
+                                        ((self.v >> 12) & 7) | 0x8);
     }
 
     #[inline(always)]
@@ -214,21 +211,25 @@ impl<'a> PPU<'a> {
         /* load the tile bitmap to high 8 bits of bitmap,
          * assume the high 8 bits are zeros */
         assert!(self.bg_bitmap[0] >> 8 == 0 &&
-                self.bg_bitmap[1] >> 8 == 0);
-        self.bg_bitmap[0] |= (self.bg_bit_low as u16) << 8;
-        self.bg_bitmap[1] |= (self.bg_bit_high as u16) << 8;
-        self.bg_palette[0] |= (self.bg_attr & 1) * 0xff;
-        self.bg_palette[1] |= ((self.bg_attr >> 1) & 1) * 0xff;
+                self.bg_bitmap[1] >> 8 == 0 &&
+                self.bg_palette[0] >> 8 == 0 &&
+                self.bg_palette[1] >> 8 == 0);
+        self.bg_bitmap[0] |= (PPU::reverse_byte(self.bg_bit_low) as u16) << 8;
+        self.bg_bitmap[1] |= (PPU::reverse_byte(self.bg_bit_high) as u16) << 8;
+        self.bg_palette[0] |= (self.bg_attr & 1) as u16 * 0xff00;
+        self.bg_palette[1] |= ((self.bg_attr >> 1) & 1) as u16 * 0xff00;
     }
 
     #[inline(always)]
     fn shift_sprites(&mut self) {
         for (i, c) in self.sp_cnt.iter_mut().enumerate() {
+            if self.oam2[i].y == 0xff { break }
             let c0 = *c;
             match c0 {
                 0 => {
-                    self.sp_bitmap[i][0] >>= 1;
-                    self.sp_bitmap[i][1] >>= 1;
+                    let t = &mut self.sp_bitmap[i];
+                    t[0] = t[0].wrapping_shr(1);
+                    t[1] = t[1].wrapping_shr(1);
                 },
                 _ => *c = c0 - 1
             }
@@ -237,10 +238,12 @@ impl<'a> PPU<'a> {
 
     #[inline(always)]
     fn shift_bgtile(&mut self, d: u8) {
-        self.bg_bitmap[0] >>= d;
-        self.bg_bitmap[1] >>= d;
-        self.bg_palette[0] >>= d;
-        self.bg_palette[1] >>= d;
+        let t1 = &mut self.bg_bitmap;
+        let t2 = &mut self.bg_palette;
+        t1[0] = t1[0].wrapping_shr(d as u32);
+        t1[1] = t1[1].wrapping_shr(d as u32);
+        t2[0] = t2[0].wrapping_shr(d as u32);
+        t2[1] = t2[1].wrapping_shr(d as u32);
     }
 
     #[inline(always)]
@@ -260,12 +263,12 @@ impl<'a> PPU<'a> {
             false => self.v += 0x1000, /* fine y < 7 */
             true => {
                 self.v &= !0x7000u16;  /* fine y <- 0 */
-                self.v = (self.v & !0x03e0u16) |
-                    (match (self.v & 0x03e0) >> 5 {
+                let y = match (self.v & 0x03e0) >> 5 {
                         29 => {self.v ^= 0x0800; 0}, /* at bottom of scanline */
                         31 => 0,                     /* do not switch nt */
                         y => y + 1
-                    }) << 5;
+                    };
+                self.v = (self.v & !0x03e0u16) | (y << 5);
             }
         }
     }
@@ -333,25 +336,26 @@ impl<'a> PPU<'a> {
 
     fn fetch_sprite(&mut self) {
         /* we use scanline here because s.y is the (actual y) - 1 */
-        for (i, v) in self.oam2.iter().enumerate() {
-            let vflip = (v.attr & 0x80) == 0x80;
-            let y0 = self.scanline - v.y as u16;
+        for (i, s) in self.oam2.iter().enumerate() {
+            if s.y == 0xff { break }
+            let vflip = (s.attr & 0x80) == 0x80;
+            let y0 = self.scanline - s.y as u16;
             let (ptable, tidx, y) = match self.get_spritesize() {
                 0 => {
                     let y = if vflip {7 - y0 as u8} else {y0 as u8};
-                    ((self.ppuctl as u16 & 0x08) << 9, v.tile, y)
+                    ((self.ppuctl as u16 & 0x08) << 9, s.tile, y)
                 },
                 _ => {
                     let y = if vflip {15 - y0 as u8} else {y0 as u8};
-                    ((v.tile as u16 & 1) << 12,
-                     (v.tile & !1u8) | (y >> 3),
+                    ((s.tile as u16 & 1) << 12,
+                     (s.tile & !1u8) | (y >> 3),
                      y & 0x7)
                 }
             };
-            self.sp_cnt[i] = v.x;
+            self.sp_cnt[i] = s.x;
             let mut low = self.mem.read(ptable | ((tidx as u16) << 4) | 0x0 | y as u16);
             let mut high = self.mem.read(ptable | ((tidx as u16) << 4) | 0x8 | y as u16);
-            if (v.attr & 0x40) == 0x40 {
+            if (s.attr & 0x40) != 0x40 {
                 low = PPU::reverse_byte(low);
                 high = PPU::reverse_byte(high);
             }
@@ -375,6 +379,7 @@ impl<'a> PPU<'a> {
     }
 
     fn render_pixel(&mut self) {
+        println!("ppuctl:{} ppumask:{}", self.ppuctl, self.ppumask);
         let x = self.cycle - 1;
         let bg_pidx =
             if x >= 8 || self.get_show_leftmost_bg() {self.get_bg_pidx()}
@@ -384,6 +389,7 @@ impl<'a> PPU<'a> {
         let mut pri = 0x1;
         if x >= 8 || self.get_show_leftmost_sp() {
             for i in 0..8 {
+                if self.oam2[i].y == 0xff { break }
                 if self.sp_cnt[i] != 0 { continue; } /* not active */
                 match self.get_sp_pidx(i) {
                     0x0 => (),
@@ -401,7 +407,7 @@ impl<'a> PPU<'a> {
         }
         assert!(0 < self.cycle && self.cycle < 257);
         assert!(self.scanline < 240);
-        self.scr.put(self.cycle as u8 - 1,
+        self.scr.put((self.cycle - 1) as u8,
                      self.scanline as u8,
                      if (pri == 0 || bg_pidx == 0) && sp_pidx != 0 {
                         self.mem.read(0x3f10 |
@@ -415,7 +421,7 @@ impl<'a> PPU<'a> {
                      });
     }
 
-    pub fn new(mem: &'a mut VMem, scr: &'a mut Screen) -> Self {
+    pub fn new(mem: &'a VMem, scr: &'a Screen) -> Self {
         let ppuctl = 0x00;
         let ppumask = 0x00;
         let ppustatus = 0xa0;
@@ -425,8 +431,6 @@ impl<'a> PPU<'a> {
         let cycle = 370;
         let scanline = 240;
         PPU {
-            nametable_ram: [0; 2048],
-            palette_ram: [0; 32],
             scanline,
             ppuctl,
             ppumask,
@@ -468,22 +472,24 @@ impl<'a> PPU<'a> {
         let visible = self.scanline < 240;
         let pre_render = self.scanline == 261;
         self.rendering = pre_render || visible;
-        if pre_render {
-            if cycle == 1 {
-                /* clear vblank, sprite zero hit & overflow */
-                self.ppustatus &= !(PPU::FLAG_VBLANK |
-                                    PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
-            } else if 279 < cycle && cycle < 305 {
-                self.reset_y();
+        if self.rendering && (self.get_show_bg() || self.get_show_sp()) {
+            if pre_render {
+                if cycle == 1 {
+                    /* clear vblank, sprite zero hit & overflow */
+                    self.ppustatus &= !(PPU::FLAG_VBLANK |
+                                        PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
+                } else if 279 < cycle && cycle < 305 {
+                    self.reset_y();
+                }
             }
-        } 
-        if self.rendering {
             let shifting = 0 < cycle && cycle < 257; /* 1..256 */
             let fetch = shifting || (320 < cycle && cycle < 337);
             if fetch { /* 1..256 and 321..336 */
                 match cycle & 0x7 {
                     1 => {
-                        self.load_bgtile();
+                        if shifting {
+                            self.load_bgtile();
+                        }
                         self.fetch_nametable_byte();
                     },
                     3 => self.fetch_attrtable_byte(),
