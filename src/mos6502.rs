@@ -762,8 +762,8 @@ impl<'a> CPU<'a> {
         for i in 0..len as u16 {
             code[i as usize] = self.mem.read(pc + i);
         }
-        println!("0x{:04x} {} a:{} x:{} y:{}",
-                 pc, disasm::parse(opcode as u8, &code[1..]), self.a, self.x, self.y);
+        //println!("0x{:04x} {} a:{} x:{} y:{}",
+        //         pc, disasm::parse(opcode as u8, &code[1..]), self.a, self.x, self.y);
         /* update opr pointing to operands of current inst */
         self.opr = pc.wrapping_add(1);
         /* update program counter pointing to next inst */

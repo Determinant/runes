@@ -47,7 +47,7 @@ impl SDLWindow {
     fn new() -> Self {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
-        let window = video_subsystem.window("rust-sdl2 demo: Video", 256 * PIXEL_SIZE, 240 * PIXEL_SIZE)
+        let window = video_subsystem.window("RuNES", 256 * PIXEL_SIZE, 240 * PIXEL_SIZE)
                                     .position_centered()
                                     .opengl()
                                     .build()
@@ -75,7 +75,7 @@ impl SDLWindow {
     }
 }
 
-const PIXEL_SIZE: u32 = 4;
+const PIXEL_SIZE: u32 = 2;
 const COLORS: [u32; 64] = [
     0x666666, 0x002A88, 0x1412A7, 0x3B00A4, 0x5C007E, 0x6E0040, 0x6C0600, 0x561D00,
     0x333500, 0x0B4800, 0x005200, 0x004F08, 0x00404D, 0x000000, 0x000000, 0x000000,
@@ -95,9 +95,9 @@ fn get_rgb(color: u8) -> Color {
 impl ppu::Screen for SDLWindow {
     fn put(&self, x: u8, y: u8, color: u8) {
         let mut canvas = self.canvas.borrow_mut();
-        println!("put {} at {}, {}", color, x, y);
+        //println!("put {} at {}, {}", color, x, y);
         canvas.set_draw_color(get_rgb(color));
-        canvas.draw_rect(Rect::new((x as u32 * PIXEL_SIZE) as i32,
+        canvas.fill_rect(Rect::new((x as u32 * PIXEL_SIZE) as i32,
                                    (y as u32 * PIXEL_SIZE) as i32,
                                    PIXEL_SIZE, PIXEL_SIZE));
     }

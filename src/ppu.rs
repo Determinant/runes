@@ -299,13 +299,9 @@ impl<'a> PPU<'a> {
             0 => 8,
             _ => 16
         };
-        self.sp_zero_insight = false;
         for (i, s) in self.oam.iter().enumerate() {
             let y = s.y as u16;
             if y <= scanline && scanline < y + h {
-                if nidx == 0 {
-                    self.sp_zero_insight = true;
-                }
                 self.oam2[nidx] = i;
                 nidx += 1;
                 if nidx == 8 {
@@ -314,17 +310,19 @@ impl<'a> PPU<'a> {
                 }
             }
         }
-        let mut m = 0;
-        unsafe {
-            let oam_raw = transmute::<&[Sprite; 64], &[[u8; 4]; 64]>(&self.oam);
-            while n < 64 {
-                let y = oam_raw[n][m] as u16;
-                if y <= scanline && scanline < y + h {
-                    self.ppustatus |= PPU::FLAG_OVERFLOW; /* set overflow */
-                } else {
-                    m = (m + 1) & 3; /* emulates hardware bug */
+        if nidx == 8 {
+            let mut m = 0;
+            unsafe {
+                let oam_raw = transmute::<&[Sprite; 64], &[[u8; 4]; 64]>(&self.oam);
+                while n < 64 {
+                    let y = oam_raw[n][m] as u16;
+                    if y <= scanline && scanline < y + h {
+                        self.ppustatus |= PPU::FLAG_OVERFLOW; /* set overflow */
+                    } else {
+                        m = (m + 1) & 3; /* emulates hardware bug */
+                    }
+                    n += 1;
                 }
-                n += 1;
             }
         }
     }
@@ -352,7 +350,7 @@ impl<'a> PPU<'a> {
                     ((self.ppuctl as u16 & 0x08) << 9, s.tile, y)
                 },
                 _ => {
-                    assert!(false);
+                    //assert!(false);
                     let y = if vflip {15 - y0 as u8} else {y0 as u8};
                     ((s.tile as u16 & 1) << 12,
                      (s.tile & !1u8) | (y >> 3),
@@ -403,7 +401,8 @@ impl<'a> PPU<'a> {
                 match self.get_sp_pidx(i) {
                     0x0 => (),
                     pidx => {
-                        if self.sp_zero_insight && bg_pidx != 0 && i == 0 {
+                        if bg_pidx != 0 && self.sp_idx[i] == 0 {
+                            assert!(i == 0);
                             self.ppustatus |= PPU::FLAG_SPRITE_ZERO; /* set sprite zero hit */
                         }
                         sp_pidx = pidx;
@@ -486,50 +485,48 @@ impl<'a> PPU<'a> {
         let visible = self.scanline < 240;
         let pre_render = self.scanline == 261;
         self.rendering = pre_render || visible;
-        if self.rendering && (self.get_show_bg() || self.get_show_sp()) {
-            if pre_render {
-                if cycle == 1 {
-                    /* clear vblank, sprite zero hit & overflow */
-                    self.ppustatus &= !(PPU::FLAG_VBLANK |
-                                        PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
-                } else if 279 < cycle && cycle < 305 {
-                    self.reset_y();
-                }
-            }
-            let shifting = 0 < cycle && cycle < 257; /* 1..256 */
-            let fetch = shifting || (320 < cycle && cycle < 337);
-            if fetch { /* 1..256 and 321..336 */
-                match cycle & 0x7 {
-                    1 => {
-                        if shifting {
-                            self.load_bgtile();
-                        }
-                        self.fetch_nametable_byte();
-                    },
-                    3 => self.fetch_attrtable_byte(),
-                    5 => self.fetch_low_bgtile_byte(),
-                    7 => self.fetch_high_bgtile_byte(),
-                    0 => self.wrapping_inc_cx(),
-                    _ => ()
-                }
-                if visible {
-                    match cycle {
-                        1 => self.clear_sprite(), /* clear secondary OAM */
-                        65 => self.eval_sprite(), /* sprite evaluation */
+        if pre_render && cycle == 1 {
+            /* clear vblank, sprite zero hit & overflow */
+            self.ppustatus &= !(PPU::FLAG_VBLANK |
+                                PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
+
+        } else if self.rendering && (self.get_show_bg() || self.get_show_sp()) {
+            if pre_render && 279 < cycle && cycle < 305 {
+                self.reset_y();
+            } else {
+                let shifting = 0 < cycle && cycle < 257; /* 1..256 */
+                let fetch = shifting || (320 < cycle && cycle < 337);
+                if fetch { /* 1..256 and 321..336 */
+                    match cycle & 0x7 {
+                        1 => {
+                            if shifting {
+                                self.load_bgtile();
+                            }
+                            self.fetch_nametable_byte();
+                        },
+                        3 => self.fetch_attrtable_byte(),
+                        5 => self.fetch_low_bgtile_byte(),
+                        7 => self.fetch_high_bgtile_byte(),
+                        0 => self.wrapping_inc_cx(),
                         _ => ()
                     }
-                }
-                match cycle {
-                    256 => self.wrapping_inc_y(),
-                    328 => self.shift_bgtile(8),
-                    _ => ()
-                }
-            } else if cycle > 336 { /* 337..340 */
-                if cycle & 1 == 1 {
-                    self.fetch_nametable_byte();
-                }
-            } else { /* 257..320 */
-                if cycle == 257 {
+                    if visible {
+                        match cycle {
+                            1 => self.clear_sprite(), /* clear secondary OAM */
+                            65 => self.eval_sprite(), /* sprite evaluation */
+                            _ => ()
+                        }
+                    }
+                    match cycle {
+                        256 => self.wrapping_inc_y(),
+                        328 => self.shift_bgtile(8),
+                        _ => ()
+                    }
+                } else if cycle > 336 { /* 337..340 */
+                    if cycle & 1 == 1 {
+                        self.fetch_nametable_byte();
+                    }
+                } else if cycle == 257 {
                     /* we don't emulate fetch to per cycle precision because all data are fetched
                      * from the secondary OAM which is not subject to any change during this
                      * scanline */
@@ -538,13 +535,13 @@ impl<'a> PPU<'a> {
                         self.fetch_sprite();
                     }
                 }
-            }
-            if shifting {
-                if visible {
-                    self.render_pixel();
+                if shifting {
+                    if visible {
+                        self.render_pixel();
+                    }
+                    self.shift_bgtile(1);
+                    self.shift_sprites();
                 }
-                self.shift_bgtile(1);
-                self.shift_sprites();
             }
         } else if self.scanline == 241 && cycle == 1 {
             self.scr.render();
