@@ -47,7 +47,6 @@ pub struct PPU<'a> {
     sp_bitmap: [[u8; 2]; 8],
     sp_idx: [usize; 8],
     sp_cnt: [u8; 8],
-    sp_zero_insight: bool,
     rendering: bool,
     buffered_read: u8,
     early_read: bool,
@@ -422,8 +421,8 @@ impl<'a> PPU<'a> {
                 match self.get_sp_pidx(i) {
                     0x0 => (),
                     pidx => {
-                        if bg_pidx != 0 && self.sp_idx[i] == 0 && x != 0xff {
-                            assert!(i == 0);
+                        if bg_pidx != 0 && self.sp_idx[i] == 0 &&
+                           x != 0xff && s.y != 0xff {
                             self.ppustatus |= PPU::FLAG_SPRITE_ZERO; /* set sprite zero hit */
                         }
                         sp_pidx = pidx;
@@ -477,7 +476,6 @@ impl<'a> PPU<'a> {
             sp_idx: [0x100; 8],
             sp_bitmap: [[0; 2]; 8],
             sp_cnt: [0; 8],
-            sp_zero_insight: false,
             rendering: false,
             buffered_read,
             early_read: false,
