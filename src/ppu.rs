@@ -57,11 +57,13 @@ pub struct PPU<'a> {
 
 impl<'a> PPU<'a> {
     pub fn write_ctl(&mut self, data: u8) {
+        self.reg = data;
         self.ppuctl = data;
         self.t = (self.t & 0x73ff) | ((data as u16 & 3) << 10);
     }
 
     pub fn write_mask(&mut self, data: u8) {
+        self.reg = data;
         self.ppumask = data;
     }
 
@@ -73,10 +75,12 @@ impl<'a> PPU<'a> {
     }
 
     pub fn write_oamaddr(&mut self, data: u8) {
+        self.reg = data;
         self.oamaddr = data;
     }
 
     pub fn write_oamdata(&mut self, data: u8) {
+        self.reg = data;
         if self.rendering { return }
         unsafe {
             let oam_raw = transmute::<&mut[Sprite; 64], &mut[u8; 256]>(&mut self.oam);
@@ -93,6 +97,7 @@ impl<'a> PPU<'a> {
     }
 
     pub fn write_scroll(&mut self, data: u8) {
+        self.reg = data;
         let data = data as u16;
         match self.w {
             false => {
@@ -109,6 +114,7 @@ impl<'a> PPU<'a> {
     }
 
     pub fn write_addr(&mut self, data: u8) {
+        self.reg = data;
         let data = data as u16;
         match self.w {
             false => {
@@ -141,6 +147,7 @@ impl<'a> PPU<'a> {
     }
 
     pub fn write_data(&mut self, data: u8) {
+        self.reg = data;
         self.mem.write(self.v, data);
         self.v = self.v.wrapping_add(match self.get_vram_inc() {
             0 => 1,
@@ -149,6 +156,7 @@ impl<'a> PPU<'a> {
     }
 
     pub fn write_oamdma(&mut self, data: u8, cpu: &mut CPU) {
+        self.reg = data;
         let mut addr = (data as u16) << 8;
         unsafe {
             let oam_raw = transmute::<&mut[Sprite; 64], &mut[u8; 256]>(&mut self.oam);
@@ -217,10 +225,10 @@ impl<'a> PPU<'a> {
         //        self.bg_palette[0] >> 8 == 0 &&
         //        self.bg_palette[1] >> 8 == 0)) {
         //    println!("at cycle {} {}", self.scanline, self.cycle) }
-        //assert!(self.bg_bitmap[0] >> 8 == 0 &&
-        //        self.bg_bitmap[1] >> 8 == 0 &&
-        //        self.bg_palette[0] >> 8 == 0 &&
-        //        self.bg_palette[1] >> 8 == 0);
+        assert!(self.bg_bitmap[0] >> 8 == 0 &&
+                self.bg_bitmap[1] >> 8 == 0 &&
+                self.bg_palette[0] >> 8 == 0 &&
+                self.bg_palette[1] >> 8 == 0);
         self.bg_bitmap[0] |= (PPU::reverse_byte(self.bg_bit_low) as u16) << 8;
         self.bg_bitmap[1] |= (PPU::reverse_byte(self.bg_bit_high) as u16) << 8;
         self.bg_palette[0] |= (self.bg_attr & 1) as u16 * 0xff00;
@@ -244,13 +252,13 @@ impl<'a> PPU<'a> {
     }
 
     #[inline(always)]
-    fn shift_bgtile(&mut self, d: u8) {
+    fn shift_bgtile(&mut self) {
         let t1 = &mut self.bg_bitmap;
         let t2 = &mut self.bg_palette;
-        t1[0] = t1[0].wrapping_shr(d as u32);
-        t1[1] = t1[1].wrapping_shr(d as u32);
-        t2[0] = t2[0].wrapping_shr(d as u32);
-        t2[1] = t2[1].wrapping_shr(d as u32);
+        t1[0] = t1[0].wrapping_shr(1);
+        t1[1] = t1[1].wrapping_shr(1);
+        t2[0] = t2[0].wrapping_shr(1);
+        t2[1] = t2[1].wrapping_shr(1);
     }
 
     #[inline(always)]
@@ -292,10 +300,12 @@ impl<'a> PPU<'a> {
 
     #[inline(always)]
     fn clear_sprite(&mut self) {
+        if self.scanline == 261 { return }
         self.oam2 = [0x100; 8];
     }
 
     fn eval_sprite(&mut self) {
+        if self.scanline == 261 { return }
         /* we use scanline here because s.y is the (actual y) - 1 */
         let mut nidx = 0;
         let mut n = 0;
@@ -341,6 +351,7 @@ impl<'a> PPU<'a> {
     }
 
     fn fetch_sprite(&mut self) {
+        if self.scanline == 261 { return }
         /* we use scanline here because s.y is the (actual y) - 1 */
         self.sp_idx = [0x100; 8];
         for (i, v) in self.oam2.iter().enumerate() {
@@ -483,9 +494,9 @@ impl<'a> PPU<'a> {
             self.cycle = cycle + 1;
             return false;
         }
-        let visible = self.scanline < 240;
+        let visible_line = self.scanline < 240;
         let pre_render = self.scanline == 261;
-        self.rendering = pre_render || visible;
+        self.rendering = pre_render || visible_line;
         if pre_render && cycle == 1 {
             /* clear vblank, sprite zero hit & overflow */
             self.ppustatus &= !(PPU::FLAG_VBLANK |
@@ -495,14 +506,16 @@ impl<'a> PPU<'a> {
             if pre_render && 279 < cycle && cycle < 305 {
                 self.reset_y();
             } else {
-                let shifting = 0 < cycle && cycle < 257; /* 1..256 */
-                let fetch = shifting || (320 < cycle && cycle < 337);
-                if fetch { /* 1..256 and 321..336 */
+                let visible_cycle = 0 < cycle && cycle < 257; /* 1..256 */
+                let fetch_cycle = visible_cycle || (320 < cycle && cycle < 337);
+                if visible_line && visible_cycle {
+                    self.render_pixel();
+                    self.shift_sprites();
+                }
+                if fetch_cycle { /* 1..256 and 321..336 */
                     match cycle & 0x7 {
                         1 => {
-                            if shifting && cycle > 1 {
-                                self.load_bgtile();
-                            }
+                            self.load_bgtile();
                             self.fetch_nametable_byte();
                         },
                         3 => self.fetch_attrtable_byte(),
@@ -511,26 +524,15 @@ impl<'a> PPU<'a> {
                         0 => self.wrapping_inc_cx(),
                         _ => ()
                     }
-                    if visible {
-                        match cycle {
-                            1 => self.clear_sprite(), /* clear secondary OAM */
-                            65 => self.eval_sprite(), /* sprite evaluation */
-                            _ => ()
-                        }
-                    }
                     match cycle {
-                        256 => {
-                            self.wrapping_inc_y()
-                        },
-                        329 => self.load_bgtile(),
+                        1 => self.clear_sprite(), /* clear secondary OAM */
+                        65 => self.eval_sprite(), /* sprite evaluation */
+                        256 => self.wrapping_inc_y(),
                         _ => ()
                     }
+                    self.shift_bgtile();
                 } else if cycle > 336 { /* 337..340 */
                     if cycle & 1 == 1 {
-                        if cycle == 337 {
-                            self.shift_bgtile(8);
-                            self.load_bgtile();
-                        }
                         self.fetch_nametable_byte();
                     }
                 } else if cycle == 257 {
@@ -538,17 +540,7 @@ impl<'a> PPU<'a> {
                      * from the secondary OAM which is not subject to any change during this
                      * scanline */
                     self.reset_cx();
-                    if visible {
-                        self.fetch_sprite();
-                    }
-                }
-
-                if shifting {
-                    if visible {
-                        self.render_pixel();
-                    }
-                    self.shift_bgtile(1);
-                    self.shift_sprites();
+                    self.fetch_sprite();
                 }
             }
         } else if self.scanline == 241 && cycle == 1 {

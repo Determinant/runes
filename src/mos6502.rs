@@ -227,10 +227,7 @@ mod ops {
 
     fn adc(cpu: &mut CPU) {
         let opr1 = cpu.a as u16;
-        let opr2 = match cpu.addr_mode {
-                    AddrMode::Immediate => cpu.imm_val,
-                    _ => cpu.mem.read(cpu.ea)
-                    } as u16;
+        let opr2 = cpu.mem.read(cpu.ea) as u16;
         let res = opr1 + opr2 + (cpu.get_carry() as u16);
         let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | OVER_FLAG | NEG_FLAG);
         cpu.a = res as u8;
@@ -245,10 +242,7 @@ mod ops {
 
     fn sbc(cpu: &mut CPU) {
         let opr1 = cpu.a as u16;
-        let opr2 = match cpu.addr_mode {
-                    AddrMode::Immediate => cpu.imm_val,
-                    _ => cpu.mem.read(cpu.ea)
-                    } as u16;
+        let opr2 = cpu.mem.read(cpu.ea) as u16;
         let res = opr1 + (0xff - opr2) + (cpu.get_carry() as u16);
         let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | OVER_FLAG | NEG_FLAG);
         cpu.a = res as u8;
@@ -263,10 +257,7 @@ mod ops {
     macro_rules! make_cmp {
         ($f: ident, $r: ident) => (fn $f(cpu: &mut CPU) {
             let opr1 = cpu.$r as u16;
-            let opr2 = match cpu.addr_mode {
-                        AddrMode::Immediate => cpu.imm_val,
-                        _ => cpu.mem.read(cpu.ea)
-                        } as u16;
+            let opr2 = cpu.mem.read(cpu.ea) as u16;
             let res = opr1.wrapping_sub(opr2);
             let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
             status |= (res < 0x100) as u8; /* if opr1 >= opr2 */
@@ -314,10 +305,7 @@ mod ops {
     macro_rules! make_logic {
         ($f: ident, $op: tt) => (
         fn $f(cpu: &mut CPU) {
-            let res = cpu.a $op match cpu.addr_mode {
-                        AddrMode::Immediate => cpu.imm_val,
-                        _ => cpu.mem.read(cpu.ea)
-                    };
+            let res = cpu.a $op cpu.mem.read(cpu.ea);
             let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
             cpu.a = res as u8;
             check_zero!(status, res);
@@ -340,13 +328,13 @@ mod ops {
 
     /* shifts */
     fn asl(cpu: &mut CPU) {
-        let res = match cpu.addr_mode {
-                    AddrMode::Accumulator => {
+        let res = match cpu.acc {
+                    true => {
                         let t = (cpu.a as u16) << 1;
                         cpu.a = t as u8;
                         t
                     },
-                    _ => {
+                    false => {
                         let t = (cpu.mem.read(cpu.ea) as u16) << 1;
                         cpu.mem.write(cpu.ea, t as u8);
                         t
@@ -360,15 +348,15 @@ mod ops {
     
     fn lsr(cpu: &mut CPU) {
         let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
-        let res = match cpu.addr_mode {
-                    AddrMode::Accumulator => {
+        let res = match cpu.acc {
+                    true => {
                         let old = cpu.a;
                         let t = old >> 1;
                         cpu.a = t as u8;
                         status |= (old & 1) as u8; /* carry flag */
                         t
                     },
-                    _ => {
+                    false => {
                         let old = cpu.mem.read(cpu.ea);
                         let t = old >> 1;
                         cpu.mem.write(cpu.ea, t as u8);
@@ -382,15 +370,15 @@ mod ops {
 
     fn rol(cpu: &mut CPU) {
         let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
-        let res = match cpu.addr_mode {
-                    AddrMode::Accumulator => {
+        let res = match cpu.acc {
+                    true => {
                         let old = cpu.a;
                         let t = old.rotate_left(1);
                         cpu.a = t as u8;
                         status |= old >> 7 as u8; /* carry flag */
                         t
                     },
-                    _ => {
+                    false => {
                         let old = cpu.mem.read(cpu.ea);
                         let t = old.rotate_left(1);
                         cpu.mem.write(cpu.ea, t as u8);
@@ -404,15 +392,15 @@ mod ops {
 
     fn ror(cpu: &mut CPU) {
         let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
-        let res = match cpu.addr_mode {
-                    AddrMode::Accumulator => {
+        let res = match cpu.acc {
+                    true => {
                         let old = cpu.a;
                         let t = old.rotate_right(1);
                         cpu.a = t as u8;
                         status |= old & 1 as u8; /* carry flag */
                         t
                     },
-                    _ => {
+                    false => {
                         let old = cpu.mem.read(cpu.ea);
                         let t = old.rotate_right(1);
                         cpu.mem.write(cpu.ea, t as u8);
@@ -512,10 +500,7 @@ mod ops {
     macro_rules! make_ld {
         ($f: ident, $r: ident) => (fn $f(cpu: &mut CPU) {
             let mut status = cpu.status & !(ZERO_FLAG | NEG_FLAG);
-            let res = match cpu.addr_mode {
-                AddrMode::Immediate => cpu.imm_val,
-                _ => cpu.mem.read(cpu.ea)
-            };
+            let res = cpu.mem.read(cpu.ea);
             cpu.$r = res;
             check_zero!(status, res);
             check_neg!(status, res);
@@ -593,37 +578,32 @@ mod ops {
 }
 
 mod addr {
-    use mos6502::{CPU, AddrMode};
+    use mos6502::{CPU};
     make_addrtable!(ADDR_MODES, fn (&mut CPU));
 
     fn acc(cpu: &mut CPU) {
-        cpu.addr_mode = AddrMode::Accumulator;
+        cpu.acc = true;
     }
 
     fn imm(cpu: &mut CPU) {
-        cpu.addr_mode = AddrMode::Immediate;
-        cpu.imm_val = cpu.mem.read(cpu.opr);
+        cpu.ea = cpu.opr;
     }
 
     fn zpg(cpu: &mut CPU) {
-        cpu.addr_mode = AddrMode::EffAddr;
         cpu.ea = cpu.mem.read(cpu.opr) as u16;
     }
 
     fn zpx(cpu: &mut CPU) {
-        cpu.addr_mode = AddrMode::EffAddr;
         cpu.ea = (cpu.mem.read(cpu.opr)
                          .wrapping_add(cpu.x)) as u16;
     }
 
     fn zpy(cpu: &mut CPU) {
-        cpu.addr_mode = AddrMode::EffAddr;
         cpu.ea = (cpu.mem.read(cpu.opr)
                          .wrapping_add(cpu.y)) as u16;
     }
 
     fn rel(cpu: &mut CPU) {
-        cpu.addr_mode = AddrMode::EffAddr;
         let base = cpu.pc;
         let offset = cpu.mem.read(cpu.opr) as i8 as i16;
         let sum = ((base & 0xff) as i16 + offset) as u16;
@@ -632,12 +612,10 @@ mod addr {
     }
 
     fn abs(cpu: &mut CPU) {
-        cpu.addr_mode = AddrMode::EffAddr;
         cpu.ea = read16!(cpu.mem, cpu.opr);
     }
 
     fn abx(cpu: &mut CPU) {
-        cpu.addr_mode = AddrMode::EffAddr;
         let base = read16!(cpu.mem, cpu.opr);
         let sum = (base & 0xff) + (cpu.x as u16);
         cpu.ea = (base & 0xff00).wrapping_add(sum);
@@ -645,7 +623,6 @@ mod addr {
     }
 
     fn aby(cpu: &mut CPU) {
-        cpu.addr_mode = AddrMode::EffAddr;
         let base = read16!(cpu.mem, cpu.opr);
         let sum = (base & 0xff) + (cpu.y as u16);
         cpu.ea = (base & 0xff00).wrapping_add(sum);
@@ -653,20 +630,17 @@ mod addr {
     }
 
     fn ind(cpu: &mut CPU) {
-        cpu.addr_mode = AddrMode::EffAddr;
         let addr = read16!(cpu.mem, cpu.opr);
         cpu.ea = read16!(cpu.mem, addr);
     }
 
     fn xin(cpu: &mut CPU) {
-        cpu.addr_mode = AddrMode::EffAddr;
         cpu.ea = read16!(cpu.mem,
                          cpu.mem.read(cpu.opr)
                                 .wrapping_add(cpu.x) as u16) as u16;
     }
 
     fn iny(cpu: &mut CPU) {
-        cpu.addr_mode = AddrMode::EffAddr;
         let base = read16!(cpu.mem, cpu.mem.read(cpu.opr) as u16);
         let sum = (base & 0xff) + (cpu.y as u16);
         cpu.ea = (base & 0xff00).wrapping_add(sum);
@@ -674,12 +648,6 @@ mod addr {
     }
 
     fn nil(_cpu: &mut CPU) {}
-}
-
-enum AddrMode {
-    Immediate,
-    Accumulator,
-    EffAddr
 }
 
 enum IntType {
@@ -696,7 +664,7 @@ pub struct CPU<'a> {
     pc: u16,
     sp: u8,
     /* internal state */
-    addr_mode: AddrMode,
+    acc: bool,
     opr: u16,
     ea: u16,    /* effective address */
     imm_val: u8,
@@ -741,7 +709,7 @@ impl<'a> CPU<'a> {
             pc, sp, status, cycle,
             opr: 0, ea: 0, imm_val: 0,
             int: None,
-            addr_mode: AddrMode::EffAddr,
+            acc: false,
             mem}
     }
 
@@ -762,13 +730,14 @@ impl<'a> CPU<'a> {
         for i in 0..len as u16 {
             code[i as usize] = self.mem.read(pc + i);
         }
-        //println!("0x{:04x} {} a:{} x:{} y:{}",
-        //         pc, disasm::parse(opcode as u8, &code[1..]), self.a, self.x, self.y);
+        println!("0x{:04x} {} a:{} x:{} y:{}",
+                 pc, disasm::parse(opcode as u8, &code[1..]), self.a, self.x, self.y);
         /* update opr pointing to operands of current inst */
         self.opr = pc.wrapping_add(1);
         /* update program counter pointing to next inst */
         self.pc = pc.wrapping_add(INST_LENGTH[opcode] as u16);
         /* get effective address based on addressing mode */
+        self.acc = false;
         addr::ADDR_MODES[opcode](self);
         /* execute the inst */
         ops::OPS[opcode](self);
