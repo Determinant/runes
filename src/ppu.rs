@@ -50,6 +50,7 @@ pub struct PPU<'a> {
     sp_zero_insight: bool,
     rendering: bool,
     buffered_read: u8,
+    early_read: bool,
     /* IO */
     mem: &'a VMem,
     scr: &'a Screen,
@@ -71,6 +72,9 @@ impl<'a> PPU<'a> {
         let res = (self.ppustatus & !0x1fu8) | (self.reg & 0x1f);
         self.ppustatus &= !PPU::FLAG_VBLANK;
         self.w = false;
+        if self.scanline == 241 && self.cycle == 0 {
+            self.early_read = true;
+        }
         res
     }
 
@@ -103,7 +107,7 @@ impl<'a> PPU<'a> {
             false => {
                 self.t = (self.t & 0x7fe0) | (data >> 3);
                 self.x = (data & 0x07) as u8;
-                assert!(self.x == 0);
+                //assert!(self.x == 0);
                 self.w = true;
             },
             true => {
@@ -178,6 +182,7 @@ impl<'a> PPU<'a> {
     #[inline(always)] fn get_show_leftmost_sp(&self) -> bool { (self.ppumask >> 2) & 1 == 1}
     #[inline(always)] fn get_show_bg(&self) -> bool { (self.ppumask >> 3) & 1 == 1}
     #[inline(always)] fn get_show_sp(&self) -> bool { (self.ppumask >> 4) & 1 == 1}
+    #[inline(always)] pub fn get_flag_vblank(&self) -> bool { (self.ppustatus >> 7) & 1 == 1 }
     const FLAG_OVERFLOW: u8 = 1 << 5;
     const FLAG_SPRITE_ZERO: u8 = 1 << 6;
     const FLAG_VBLANK: u8 = 1 << 7;
@@ -225,10 +230,10 @@ impl<'a> PPU<'a> {
         //        self.bg_palette[0] >> 8 == 0 &&
         //        self.bg_palette[1] >> 8 == 0)) {
         //    println!("at cycle {} {}", self.scanline, self.cycle) }
-        assert!(self.bg_bitmap[0] >> 8 == 0 &&
-                self.bg_bitmap[1] >> 8 == 0 &&
-                self.bg_palette[0] >> 8 == 0 &&
-                self.bg_palette[1] >> 8 == 0);
+        //assert!(self.bg_bitmap[0] >> 8 == 0 &&
+        //        self.bg_bitmap[1] >> 8 == 0 &&
+        //        self.bg_palette[0] >> 8 == 0 &&
+        //        self.bg_palette[1] >> 8 == 0);
         self.bg_bitmap[0] |= (PPU::reverse_byte(self.bg_bit_low) as u16) << 8;
         self.bg_bitmap[1] |= (PPU::reverse_byte(self.bg_bit_high) as u16) << 8;
         self.bg_palette[0] |= (self.bg_attr & 1) as u16 * 0xff00;
@@ -389,7 +394,8 @@ impl<'a> PPU<'a> {
     #[inline(always)]
     fn get_bg_pidx(&self) -> u8 {
         if self.get_show_bg() {
-            ((self.bg_bitmap[1] & 1) << 1) as u8 | (self.bg_bitmap[0] & 1) as u8
+            (((self.bg_bitmap[1] >> self.x) & 1) << 1) as u8 |
+              ((self.bg_bitmap[0] >> self.x) & 1) as u8
         } else { 0 }
     }
 
@@ -439,8 +445,8 @@ impl<'a> PPU<'a> {
                                       sp_pidx as u16)
                      } else {
                         self.mem.read(0x3f00 |
-                                      (((self.bg_palette[1] & 1) << 3) |
-                                       ((self.bg_palette[0] & 1) << 2)) as u16 |
+                                      ((((self.bg_palette[1] >> self.x) & 1) << 3) |
+                                       (((self.bg_palette[0] >> self.x) & 1) << 2)) as u16 |
                                       bg_pidx as u16)
                      });
     }
@@ -474,6 +480,7 @@ impl<'a> PPU<'a> {
             sp_zero_insight: false,
             rendering: false,
             buffered_read,
+            early_read: false,
             mem, scr
         }
     }
@@ -545,9 +552,12 @@ impl<'a> PPU<'a> {
             }
         } else if self.scanline == 241 && cycle == 1 {
             self.scr.render();
-            self.ppustatus |= PPU::FLAG_VBLANK;
+            if !self.early_read {
+                self.ppustatus |= PPU::FLAG_VBLANK;
+            }
             self.cycle += 1;
-            return self.get_flag_nmi(); /* trigger cpu's NMI */
+            self.early_read = false;
+            return !self.early_read && self.get_flag_nmi(); /* trigger cpu's NMI */
         }
         self.cycle += 1;
         if self.cycle > 340 {

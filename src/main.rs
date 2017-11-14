@@ -186,6 +186,7 @@ fn main() {
     mem.init(&mut cpu, &mut ppu);
     let mut cnt = 0;
     let mut cnt2 = 0;
+    let mut flag = false;
     loop {
         if win.poll() {break}
         cpu.step();
@@ -196,9 +197,16 @@ fn main() {
                 if ppu.tick() {
                     println!("triggering nmi");
                     cpu.trigger_nmi();
-                    println!("{} cpu {} ppu per frame", cnt, cnt2);
-                    cnt2 = 0;
-                    cnt = 0;
+                }
+                if ppu.get_flag_vblank() {
+                    if !flag {
+                        println!("{} cpu {} ppu per frame", cnt, cnt2);
+                        cnt2 = 0;
+                        cnt = 0;
+                        flag = true;
+                    }
+                } else {
+                    flag = false;
                 }
             }
             cpu.cycle -= 1;

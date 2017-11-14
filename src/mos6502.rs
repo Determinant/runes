@@ -42,7 +42,6 @@ macro_rules! make_addrtable {
         rel, iny, nil, iny, zpx, zpx, zpx, zpx, nil, aby, nil, aby, abx, abx, abx, abx,
     ];);
 }
-
 const INST_LENGTH: [u8; 0x100] =  [
     1, 2, 0, 0, 2, 2, 2, 0, 1, 2, 1, 0, 3, 3, 3, 0,
     2, 2, 0, 0, 2, 2, 2, 0, 1, 3, 1, 0, 3, 3, 3, 0,
@@ -80,6 +79,26 @@ const INST_CYCLE: [u8; 0x100] = [
     2, 6, 2, 8, 3, 3, 5, 5, 2, 2, 2, 2, 4, 4, 6, 6,
     2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
 ];
+
+const INST_EXTRA_CYCLE: [u8; 0x100] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0,
+];
+
 
 const NMI_VECTOR: u16 = 0xfffa;
 const RESET_VECTOR: u16 = 0xfffc;
@@ -417,8 +436,8 @@ mod ops {
         ($f: ident, $e: ident) => (fn $f(cpu: &mut CPU) {
             match cpu.$e() {
                 0 => {
+                    cpu.cycle += 1 + ((cpu.pc >> 8) != (cpu.ea >> 8)) as u32;
                     cpu.pc = cpu.ea;
-                    cpu.cycle += 1;
                 },
                 _ => ()
             }});
@@ -429,8 +448,8 @@ mod ops {
             match cpu.$e() {
                 0 => (),
                 _ => {
+                    cpu.cycle += 1 + ((cpu.pc >> 8) != (cpu.ea >> 8)) as u32;
                     cpu.pc = cpu.ea;
-                    cpu.cycle += 1;
                 }
             }});
     }
@@ -579,75 +598,74 @@ mod ops {
 
 mod addr {
     use mos6502::{CPU};
-    make_addrtable!(ADDR_MODES, fn (&mut CPU));
+    make_addrtable!(ADDR_MODES, fn (&mut CPU) -> u8);
 
-    fn acc(cpu: &mut CPU) {
-        cpu.acc = true;
+    fn acc(cpu: &mut CPU) -> u8 {
+        cpu.acc = true; 0
     }
 
-    fn imm(cpu: &mut CPU) {
-        cpu.ea = cpu.opr;
+    fn imm(cpu: &mut CPU) -> u8 {
+        cpu.ea = cpu.opr; 0
     }
 
-    fn zpg(cpu: &mut CPU) {
-        cpu.ea = cpu.mem.read(cpu.opr) as u16;
+    fn zpg(cpu: &mut CPU) -> u8 {
+        cpu.ea = cpu.mem.read(cpu.opr) as u16; 0
     }
 
-    fn zpx(cpu: &mut CPU) {
+    fn zpx(cpu: &mut CPU) -> u8 {
         cpu.ea = (cpu.mem.read(cpu.opr)
-                         .wrapping_add(cpu.x)) as u16;
+                         .wrapping_add(cpu.x)) as u16; 0
     }
 
-    fn zpy(cpu: &mut CPU) {
+    fn zpy(cpu: &mut CPU) -> u8 {
         cpu.ea = (cpu.mem.read(cpu.opr)
-                         .wrapping_add(cpu.y)) as u16;
+                         .wrapping_add(cpu.y)) as u16; 0
     }
 
-    fn rel(cpu: &mut CPU) {
+    fn rel(cpu: &mut CPU) -> u8 {
         let base = cpu.pc;
         let offset = cpu.mem.read(cpu.opr) as i8 as i16;
-        let sum = ((base & 0xff) as i16 + offset) as u16;
-        cpu.ea = (base & 0xff00).wrapping_add(sum);
-        cpu.cycle += (sum >> 8) as u32;
+        cpu.ea = base.wrapping_add(offset as u16);
+        0
     }
 
-    fn abs(cpu: &mut CPU) {
-        cpu.ea = read16!(cpu.mem, cpu.opr);
+    fn abs(cpu: &mut CPU) -> u8 {
+        cpu.ea = read16!(cpu.mem, cpu.opr); 0
     }
 
-    fn abx(cpu: &mut CPU) {
+    fn abx(cpu: &mut CPU) -> u8 {
         let base = read16!(cpu.mem, cpu.opr);
         let sum = (base & 0xff) + (cpu.x as u16);
         cpu.ea = (base & 0xff00).wrapping_add(sum);
-        cpu.cycle += (sum >> 8) as u32; /* boundary cross if carry */
+        (sum >> 8) as u8 /* boundary cross if carry */
     }
 
-    fn aby(cpu: &mut CPU) {
+    fn aby(cpu: &mut CPU) -> u8 {
         let base = read16!(cpu.mem, cpu.opr);
         let sum = (base & 0xff) + (cpu.y as u16);
         cpu.ea = (base & 0xff00).wrapping_add(sum);
-        cpu.cycle += (sum >> 8) as u32; /* boundary cross if carry */
+        (sum >> 8) as u8 /* boundary cross if carry */
     }
 
-    fn ind(cpu: &mut CPU) {
+    fn ind(cpu: &mut CPU) -> u8 {
         let addr = read16!(cpu.mem, cpu.opr);
-        cpu.ea = read16!(cpu.mem, addr);
+        cpu.ea = read16!(cpu.mem, addr); 0
     }
 
-    fn xin(cpu: &mut CPU) {
+    fn xin(cpu: &mut CPU) -> u8 {
         cpu.ea = read16!(cpu.mem,
                          cpu.mem.read(cpu.opr)
-                                .wrapping_add(cpu.x) as u16) as u16;
+                                .wrapping_add(cpu.x) as u16) as u16; 0
     }
 
-    fn iny(cpu: &mut CPU) {
+    fn iny(cpu: &mut CPU) -> u8 {
         let base = read16!(cpu.mem, cpu.mem.read(cpu.opr) as u16);
         let sum = (base & 0xff) + (cpu.y as u16);
         cpu.ea = (base & 0xff00).wrapping_add(sum);
-        cpu.cycle += (sum >> 8) as u32; /* boundary cross if carry */
+        (sum >> 8) as u8 /* boundary cross if carry */
     }
 
-    fn nil(_cpu: &mut CPU) {}
+    fn nil(_cpu: &mut CPU) -> u8 {0}
 }
 
 enum IntType {
@@ -717,12 +735,15 @@ impl<'a> CPU<'a> {
     make_int!(irq, IRQ_VECTOR);
 
     pub fn step(&mut self) {
-        match self.int {
-            Some(IntType::NMI) => self.nmi(),
-            Some(IntType::IRQ) => self.irq(),
-            _ => ()
+        if self.int.is_some() {
+            match self.int {
+                Some(IntType::NMI) => self.nmi(),
+                Some(IntType::IRQ) => self.irq(),
+                _ => ()
+            }
+            self.int = None;
+            return;
         }
-        self.int = None;
         let pc = self.pc;
         let opcode = self.mem.read(pc) as usize;
         let len = INST_LENGTH[opcode];
@@ -738,10 +759,10 @@ impl<'a> CPU<'a> {
         self.pc = pc.wrapping_add(INST_LENGTH[opcode] as u16);
         /* get effective address based on addressing mode */
         self.acc = false;
-        addr::ADDR_MODES[opcode](self);
+        let e = addr::ADDR_MODES[opcode](self) * INST_EXTRA_CYCLE[opcode];
         /* execute the inst */
         ops::OPS[opcode](self);
-        self.cycle += INST_CYCLE[opcode] as u32;
+        self.cycle += (INST_CYCLE[opcode] + e) as u32;
     }
 
     pub fn get_pc(&self) -> u16 { self.pc }
