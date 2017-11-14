@@ -212,10 +212,15 @@ impl<'a> PPU<'a> {
     fn load_bgtile(&mut self) {
         /* load the tile bitmap to high 8 bits of bitmap,
          * assume the high 8 bits are zeros */
-        assert!(self.bg_bitmap[0] >> 8 == 0 &&
-                self.bg_bitmap[1] >> 8 == 0 &&
-                self.bg_palette[0] >> 8 == 0 &&
-                self.bg_palette[1] >> 8 == 0);
+        //if (!(self.bg_bitmap[0] >> 8 == 0 &&
+        //        self.bg_bitmap[1] >> 8 == 0 &&
+        //        self.bg_palette[0] >> 8 == 0 &&
+        //        self.bg_palette[1] >> 8 == 0)) {
+        //    println!("at cycle {} {}", self.scanline, self.cycle) }
+        //assert!(self.bg_bitmap[0] >> 8 == 0 &&
+        //        self.bg_bitmap[1] >> 8 == 0 &&
+        //        self.bg_palette[0] >> 8 == 0 &&
+        //        self.bg_palette[1] >> 8 == 0);
         self.bg_bitmap[0] |= (PPU::reverse_byte(self.bg_bit_low) as u16) << 8;
         self.bg_bitmap[1] |= (PPU::reverse_byte(self.bg_bit_high) as u16) << 8;
         self.bg_palette[0] |= (self.bg_attr & 1) as u16 * 0xff00;
@@ -401,7 +406,7 @@ impl<'a> PPU<'a> {
                 match self.get_sp_pidx(i) {
                     0x0 => (),
                     pidx => {
-                        if bg_pidx != 0 && self.sp_idx[i] == 0 {
+                        if bg_pidx != 0 && self.sp_idx[i] == 0 && x != 0xff {
                             assert!(i == 0);
                             self.ppustatus |= PPU::FLAG_SPRITE_ZERO; /* set sprite zero hit */
                         }
@@ -476,10 +481,6 @@ impl<'a> PPU<'a> {
         let cycle = self.cycle;
         if cycle == 0 {
             self.cycle = cycle + 1;
-            self.bg_bitmap[0] = 0;
-            self.bg_bitmap[1] = 0;
-            self.bg_palette[0] = 0;
-            self.bg_palette[1] = 0;
             return false;
         }
         let visible = self.scanline < 240;
@@ -499,7 +500,7 @@ impl<'a> PPU<'a> {
                 if fetch { /* 1..256 and 321..336 */
                     match cycle & 0x7 {
                         1 => {
-                            if shifting {
+                            if shifting && cycle > 1 {
                                 self.load_bgtile();
                             }
                             self.fetch_nametable_byte();
@@ -518,12 +519,18 @@ impl<'a> PPU<'a> {
                         }
                     }
                     match cycle {
-                        256 => self.wrapping_inc_y(),
-                        328 => self.shift_bgtile(8),
+                        256 => {
+                            self.wrapping_inc_y()
+                        },
+                        329 => self.load_bgtile(),
                         _ => ()
                     }
                 } else if cycle > 336 { /* 337..340 */
                     if cycle & 1 == 1 {
+                        if cycle == 337 {
+                            self.shift_bgtile(8);
+                            self.load_bgtile();
+                        }
                         self.fetch_nametable_byte();
                     }
                 } else if cycle == 257 {
@@ -535,6 +542,7 @@ impl<'a> PPU<'a> {
                         self.fetch_sprite();
                     }
                 }
+
                 if shifting {
                     if visible {
                         self.render_pixel();

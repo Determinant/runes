@@ -184,19 +184,25 @@ fn main() {
     let mut ppu = ppu::PPU::new(&pmem, &win);
     let mut cpu = mos6502::CPU::new(&mem);
     mem.init(&mut cpu, &mut ppu);
-
+    let mut cnt = 0;
+    let mut cnt2 = 0;
     loop {
         if win.poll() {break}
         cpu.step();
         //println!("cpu at 0x{:04x}", cpu.get_pc());
         while cpu.cycle > 0 {
             for _ in 0..3 {
+                cnt2 += 1;
                 if ppu.tick() {
                     println!("triggering nmi");
                     cpu.trigger_nmi();
+                    println!("{} cpu {} ppu per frame", cnt, cnt2);
+                    cnt2 = 0;
+                    cnt = 0;
                 }
             }
             cpu.cycle -= 1;
+            cnt += 1;
         }
     }
 }
