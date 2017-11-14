@@ -84,7 +84,7 @@ impl<'a> VMem for CPUMemory<'a> {
 
 pub struct PPUMemory<'a> {
     pattern_table: RefCell<[u8; 0x2000]>,
-    nametable: RefCell<[u8; 0x1000]>,
+    nametable: RefCell<[u8; 0x800]>,
     palette: RefCell<[u8; 0x20]>,
     cart: &'a Cartridge,
     mapper: &'a VMem,
@@ -95,10 +95,21 @@ impl<'a> PPUMemory<'a> {
                cart: &'a Cartridge) -> Self {
         PPUMemory{
             pattern_table: RefCell::new([0; 0x2000]),
-            nametable: RefCell::new([0; 0x1000]),
+            nametable: RefCell::new([0; 0x800]),
             palette: RefCell::new([0; 0x20]),
             cart,
             mapper}
+    }
+
+    pub fn dump(&self) {
+        for (i, v) in self.palette.borrow().iter().enumerate() {
+            print!("{:02x} ", *v);
+            if (i & 0x7) == 0x7 {println!("@{:02x}", i)}
+        }
+        for (i, v) in self.nametable.borrow().iter().enumerate() {
+            print!("{:02x} ", *v);
+            if (i & 0x1f) == 0x1f {println!("@{:02x}", i)}
+        }
     }
 }
 

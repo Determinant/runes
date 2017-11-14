@@ -75,7 +75,7 @@ impl SDLWindow {
     }
 }
 
-const PIXEL_SIZE: u32 = 2;
+const PIXEL_SIZE: u32 = 4;
 const COLORS: [u32; 64] = [
     0x666666, 0x002A88, 0x1412A7, 0x3B00A4, 0x5C007E, 0x6E0040, 0x6C0600, 0x561D00,
     0x333500, 0x0B4800, 0x005200, 0x004F08, 0x00404D, 0x000000, 0x000000, 0x000000,
@@ -204,6 +204,7 @@ fn main() {
                         cnt2 = 0;
                         cnt = 0;
                         flag = true;
+                        //pmem.dump();
                     }
                 } else {
                     flag = false;

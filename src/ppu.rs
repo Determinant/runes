@@ -230,10 +230,10 @@ impl<'a> PPU<'a> {
         //        self.bg_palette[0] >> 8 == 0 &&
         //        self.bg_palette[1] >> 8 == 0)) {
         //    println!("at cycle {} {}", self.scanline, self.cycle) }
-        //assert!(self.bg_bitmap[0] >> 8 == 0 &&
-        //        self.bg_bitmap[1] >> 8 == 0 &&
-        //        self.bg_palette[0] >> 8 == 0 &&
-        //        self.bg_palette[1] >> 8 == 0);
+        assert!(self.bg_bitmap[0] >> 8 == 0 &&
+                self.bg_bitmap[1] >> 8 == 0 &&
+                self.bg_palette[0] >> 8 == 0 &&
+                self.bg_palette[1] >> 8 == 0);
         self.bg_bitmap[0] |= (PPU::reverse_byte(self.bg_bit_low) as u16) << 8;
         self.bg_bitmap[1] |= (PPU::reverse_byte(self.bg_bit_high) as u16) << 8;
         self.bg_palette[0] |= (self.bg_attr & 1) as u16 * 0xff00;
@@ -407,7 +407,6 @@ impl<'a> PPU<'a> {
     }
 
     fn render_pixel(&mut self) {
-        //println!("ppuctl:{} ppumask:{}", self.ppuctl, self.ppumask);
         let x = self.cycle - 1;
         let bg_pidx =
             if x >= 8 || self.get_show_leftmost_bg() {self.get_bg_pidx()}
@@ -439,16 +438,17 @@ impl<'a> PPU<'a> {
         assert!(self.scanline < 240);
         self.scr.put((self.cycle - 1) as u8,
                      self.scanline as u8,
-                     if (pri == 0 || bg_pidx == 0) && sp_pidx != 0 {
-                        self.mem.read(0x3f10 |
-                                      ((self.oam[self.sp_idx[sp_id]].attr & 3) << 2) as u16 |
-                                      sp_pidx as u16)
+                     self.mem.read(if (pri == 0 || bg_pidx == 0) && sp_pidx != 0 {
+                        0x3f10 | ((self.oam[self.sp_idx[sp_id]].attr & 3) << 2) as u16 |
+                                 sp_pidx as u16
                      } else {
-                        self.mem.read(0x3f00 |
-                                      ((((self.bg_palette[1] >> self.x) & 1) << 3) |
-                                       (((self.bg_palette[0] >> self.x) & 1) << 2)) as u16 |
-                                      bg_pidx as u16)
-                     });
+                        0x3f00 | match bg_pidx {
+                            0 => 0,
+                            _ => ((((self.bg_palette[1] >> self.x) & 1) << 3) |
+                                 (((self.bg_palette[0] >> self.x) & 1) << 2)) as u16 |
+                                 bg_pidx as u16
+                        }
+                     }));
     }
 
     pub fn new(mem: &'a VMem, scr: &'a Screen) -> Self {
@@ -515,10 +515,6 @@ impl<'a> PPU<'a> {
             } else {
                 let visible_cycle = 0 < cycle && cycle < 257; /* 1..256 */
                 let fetch_cycle = visible_cycle || (320 < cycle && cycle < 337);
-                if visible_line && visible_cycle {
-                    self.render_pixel();
-                    self.shift_sprites();
-                }
                 if fetch_cycle { /* 1..256 and 321..336 */
                     match cycle & 0x7 {
                         1 => {
@@ -536,6 +532,10 @@ impl<'a> PPU<'a> {
                         65 => self.eval_sprite(), /* sprite evaluation */
                         256 => self.wrapping_inc_y(),
                         _ => ()
+                    }
+                    if visible_line && visible_cycle {
+                        self.render_pixel();
+                        self.shift_sprites();
                     }
                     self.shift_bgtile();
                 } else if cycle > 336 { /* 337..340 */

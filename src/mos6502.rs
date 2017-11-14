@@ -388,22 +388,19 @@ mod ops {
     }
 
     fn rol(cpu: &mut CPU) {
-        let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
         let res = match cpu.acc {
                     true => {
-                        let old = cpu.a;
-                        let t = old.rotate_left(1);
-                        cpu.a = t as u8;
-                        status |= old >> 7 as u8; /* carry flag */
+                        let t = (cpu.a as u16) << 1;
+                        cpu.a = t as u8 | cpu.get_carry();
                         t
                     },
                     false => {
-                        let old = cpu.mem.read(cpu.ea);
-                        let t = old.rotate_left(1);
-                        cpu.mem.write(cpu.ea, t as u8);
-                        status |= old >> 7 as u8; /* carry flag */
+                        let t = (cpu.mem.read(cpu.ea) as u16) << 1;
+                        cpu.mem.write(cpu.ea, t as u8 | cpu.get_carry());
                         t
                     }};
+        let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
+        status |= (res >> 8) as u8; /* carry flag */
         check_zero!(status, res);
         check_neg!(status, res);
         cpu.status = status;
@@ -414,16 +411,16 @@ mod ops {
         let res = match cpu.acc {
                     true => {
                         let old = cpu.a;
-                        let t = old.rotate_right(1);
-                        cpu.a = t as u8;
-                        status |= old & 1 as u8; /* carry flag */
+                        let t = old >> 1;
+                        cpu.a = t as u8 | (cpu.get_carry() << 7);
+                        status |= (old & 1) as u8; /* carry flag */
                         t
                     },
                     false => {
                         let old = cpu.mem.read(cpu.ea);
-                        let t = old.rotate_right(1);
-                        cpu.mem.write(cpu.ea, t as u8);
-                        status |= old & 1 as u8; /* carry flag */
+                        let t = old >> 1;
+                        cpu.mem.write(cpu.ea, t as u8 | (cpu.get_carry() << 7));
+                        status |= (old & 1) as u8; /* carry flag */
                         t
                     }};
         check_zero!(status, res);
@@ -751,8 +748,9 @@ impl<'a> CPU<'a> {
         for i in 0..len as u16 {
             code[i as usize] = self.mem.read(pc + i);
         }
-        println!("0x{:04x} {} a:{} x:{} y:{}",
-                 pc, disasm::parse(opcode as u8, &code[1..]), self.a, self.x, self.y);
+        //println!("0x{:04x} {} a:{:02x} x:{:02x} y:{:02x} s: {:02x} sp: {:02x}",
+        //         pc, disasm::parse(opcode as u8, &code[1..]),
+        //         self.a, self.x, self.y, self.status, self.sp);
         /* update opr pointing to operands of current inst */
         self.opr = pc.wrapping_add(1);
         /* update program counter pointing to next inst */
