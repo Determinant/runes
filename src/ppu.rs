@@ -9,6 +9,15 @@ pub trait Screen {
     fn render(&self);
 }
 
+pub trait PMem: VMem {
+    fn read_nametable(&self, addr: u16) -> u8;
+    fn read_palette(&self, addr: u16) -> u8;
+    fn write_nametable(&self, addr: u16, data: u8);
+    fn write_palette(&self, addr: u16, data: u8);
+    fn read_mapper(&self, addr: u16) -> u8;
+    fn write_mapper(&self, addr: u16, data: u8);
+}
+
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
 struct Sprite {
@@ -51,7 +60,7 @@ pub struct PPU<'a> {
     buffered_read: u8,
     early_read: bool,
     /* IO */
-    mem: &'a VMem,
+    mem: &'a PMem,
     scr: &'a Screen,
 }
 
@@ -200,14 +209,14 @@ impl<'a> PPU<'a> {
 
     #[inline(always)]
     fn fetch_nametable_byte(&mut self) {
-        self.bg_nt = self.mem.read(0x2000 | (self.v & 0x0fff));
+        self.bg_nt = self.mem.read_nametable(self.v & 0x0fff);
     }
 
     #[inline(always)]
     fn fetch_attrtable_byte(&mut self) {
         let v = self.v;
         /* the byte representing 4x4 tiles */
-        let b = self.mem.read(0x23c0 | (v & 0x0c00) |
+        let b = self.mem.read_nametable(0x03c0 | (v & 0x0c00) |
                             ((v >> 4) & 0x38) | ((v >> 2) & 0x07));
         self.bg_attr = (b >> ((v & 2) | ((v & 0x40) >> 4))) & 3;
     }
@@ -215,7 +224,7 @@ impl<'a> PPU<'a> {
     #[inline(always)]
     fn fetch_low_bgtile_byte(&mut self) {
                                         /* 0x?000 */
-        self.bg_bit_low = self.mem.read(((self.ppuctl as u16 & 0x10) << 8) |
+        self.bg_bit_low = self.mem.read_mapper(((self.ppuctl as u16 & 0x10) << 8) |
                                         /* 0x-??0 */
                                         ((self.bg_nt as u16) << 4) |
                                         /* 0x---? (0 - 7) */
@@ -225,7 +234,7 @@ impl<'a> PPU<'a> {
     #[inline(always)]
     fn fetch_high_bgtile_byte(&mut self) {
                                         /* 0x?000 */
-        self.bg_bit_high = self.mem.read(((self.ppuctl as u16 & 0x10) << 8) |
+        self.bg_bit_high = self.mem.read_mapper(((self.ppuctl as u16 & 0x10) << 8) |
                                         /* 0x-??0 */
                                         ((self.bg_nt as u16) << 4) |
                                         /* 0x---? (8 - f) */
@@ -379,8 +388,8 @@ impl<'a> PPU<'a> {
             };
             self.sp_idx[i] = j;
             self.sp_cnt[i] = s.x;
-            let mut low = self.mem.read(ptable | ((tidx as u16) << 4) | 0x0 | y as u16);
-            let mut high = self.mem.read(ptable | ((tidx as u16) << 4) | 0x8 | y as u16);
+            let mut low = self.mem.read_mapper(ptable | ((tidx as u16) << 4) | 0x0 | y as u16);
+            let mut high = self.mem.read_mapper(ptable | ((tidx as u16) << 4) | 0x8 | y as u16);
             if (s.attr & 0x40) == 0x40 {
                 low = PPU::reverse_byte(low);
                 high = PPU::reverse_byte(high);
@@ -431,17 +440,17 @@ impl<'a> PPU<'a> {
         assert!(self.scanline < 240);
         self.scr.put((self.cycle - 1) as u8,
                      self.scanline as u8,
-                     self.mem.read(if (pri == 0 || bg_pidx == 0) && sp_pidx != 0 {
-                        0x3f10 | sp
+                     self.mem.read_palette(if (pri == 0 || bg_pidx == 0) && sp_pidx != 0 {
+                        0x0010 | sp
                      } else {
-                        0x3f00 | match bg_pidx {
+                        0x0000 | match bg_pidx {
                             0 => 0,
                             _ => bg
                         }
                      }));
     }
 
-    pub fn new(mem: &'a VMem, scr: &'a Screen) -> Self {
+    pub fn new(mem: &'a PMem, scr: &'a Screen) -> Self {
         let ppuctl = 0x00;
         let ppumask = 0x00;
         let ppustatus = 0xa0;

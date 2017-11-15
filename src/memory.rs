@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use ppu::PPU;
+use ppu::{PPU, PMem};
 use mos6502::CPU;
 use cartridge::{MirrorType, Cartridge};
 use core::cell::{UnsafeCell, Cell};
@@ -121,11 +121,10 @@ const MIRROR_IDX: [[u8; 4]; 5] = [
 ];
 
 #[inline(always)]
-fn get_mirror_addr(kind: MirrorType, mut addr: u16) -> u16 {
-    addr = (addr - 0x2000) & 0x0fff;
+fn get_mirror_addr(kind: MirrorType, addr: u16) -> u16 {
     let table = addr >> 10;
     let offset = addr & 0x03ff;
-    0x2000 + ((MIRROR_IDX[kind as usize][table as usize] as u16) << 10) + offset
+    ((MIRROR_IDX[kind as usize][table as usize] as u16) << 10) + offset
 }
 
 #[inline(always)]
@@ -135,22 +134,49 @@ fn get_mirror_palette(addr: u16) -> u16 {
     } else { addr }
 }
 
+impl<'a> PMem for PPUMemory<'a> {
+    #[inline(always)]
+    fn read_nametable(&self, addr: u16) -> u8 {
+        let kind = self.cart.mirror_type;
+        unsafe {(*self.nametable.get())[(get_mirror_addr(kind, addr) & 0x7ff) as usize]}
+    }
+
+    #[inline(always)]
+    fn read_palette(&self, addr: u16) -> u8 { unsafe {
+        (*self.palette.get())[get_mirror_palette(addr) as usize]
+    }}
+
+    #[inline(always)]
+    fn write_nametable(&self, addr: u16, data: u8) {
+        let kind = self.cart.mirror_type;
+        unsafe {(*self.nametable.get())[(get_mirror_addr(kind, addr) & 0x7ff) as usize] = data}
+    }
+
+    #[inline(always)]
+    fn write_palette(&self, addr: u16, data: u8) { unsafe {
+        (*self.palette.get())[get_mirror_palette(addr) as usize] = data;
+    }}
+
+    #[inline(always)]
+    fn read_mapper(&self, addr: u16) -> u8 {
+        self.mapper.read(addr)
+    }
+
+    #[inline(always)]
+    fn write_mapper(&self, addr: u16, data: u8) {
+        self.mapper.write(addr, data);
+    }
+}
+
 impl<'a> VMem for PPUMemory<'a> {
     fn read(&self, mut addr: u16) -> u8 {
         addr &= 0x3fff;
         if addr < 0x2000 {
-            self.mapper.read(addr)
+            self.read_mapper(addr)
         } else if addr < 0x3f00 {
-            let kind = self.cart.mirror_type;
-            unsafe {
-                (*self.nametable.get())
-                [(get_mirror_addr(kind, addr) & 0x07ff) as usize]
-            }
+            self.read_nametable((addr - 0x2000) & 0xfff)
         } else if addr < 0x4000 {
-            unsafe {
-                (*self.palette.get())
-                [get_mirror_palette(addr & 0x1f) as usize]
-            }
+            self.read_palette((addr - 0x3f00) & 0x1f)
         } else {
             panic!("invalid ppu read access at 0x{:04x}", addr)
         }
@@ -159,18 +185,11 @@ impl<'a> VMem for PPUMemory<'a> {
     fn write(&self, mut addr: u16, data: u8) {
         addr &= 0x3fff;
         if addr < 0x2000 {
-            self.mapper.write(addr, data)
+            self.write_mapper(addr, data);
         } else if addr < 0x3f00 {
-            let kind = self.cart.mirror_type;
-            unsafe {
-                (*self.nametable.get())
-                [(get_mirror_addr(kind, addr) & 0x07ff) as usize] = data;
-            }
+            self.write_nametable((addr - 0x2000) & 0xfff, data);
         } else if addr < 0x4000 {
-            unsafe {
-                (*self.palette.get())
-                [get_mirror_palette(addr & 0x1f) as usize] = data;
-            }
+            self.write_palette((addr - 0x3f00) & 0x1f, data);
         } else {
             panic!("invalid ppu write access at 0x{:04x}", addr)
         }
