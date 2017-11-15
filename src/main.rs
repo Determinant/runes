@@ -63,7 +63,7 @@ struct SDLWindow {
     canvas: RefCell<sdl2::render::WindowCanvas>,
     events: RefCell<sdl2::EventPump>,
     frame_buffer: UnsafeCell<[u8; FB_SIZE]>,
-    texture_creator: sdl2::render::TextureCreator<sdl2::video::WindowContext>,
+    texture: UnsafeCell<sdl2::render::Texture>
 }
 
 impl SDLWindow {
@@ -84,7 +84,8 @@ impl SDLWindow {
             canvas: RefCell::new(canvas),
             events: RefCell::new(sdl_context.event_pump().unwrap()),
             frame_buffer: UnsafeCell::new([0; FB_SIZE]),
-            texture_creator,
+            texture: UnsafeCell::new(texture_creator.create_texture_streaming(
+                        PixelFormatEnum::RGB24, WIN_WIDTH, WIN_HEIGHT).unwrap())
         }
     }
 
@@ -130,12 +131,11 @@ impl ppu::Screen for SDLWindow {
     fn render(&self) {
         let mut canvas = self.canvas.borrow_mut();
         let fb = unsafe{&*self.frame_buffer.get()};
-        let mut texture = self.texture_creator.create_texture_streaming(
-                        PixelFormatEnum::RGB24, WIN_WIDTH, WIN_HEIGHT).unwrap();
-        texture.update(Rect::new(0, 0, WIN_WIDTH, WIN_HEIGHT), fb, FB_PITCH).unwrap();
+        let texture = unsafe{&mut *self.texture.get()};
+        texture.update(None, fb, FB_PITCH).unwrap();
         canvas.copy(&texture, None, Some(Rect::new(0, 0, WIN_WIDTH, WIN_HEIGHT))).unwrap();
         canvas.present();
-        canvas.set_draw_color(Color::RGB(128, 128, 128));
+        //canvas.set_draw_color(Color::RGB(128, 128, 128));
         canvas.clear();
     }
 }

@@ -1,7 +1,8 @@
 [package]
 name = "runes"
 version = "0.1.0"
-authors = ["Determinant <ted.sybil@gmail.com>"]
+authors = ["Determinant <tederminant@gmail.com>"]
 
-[dependencies]
-sdl2 = "0.31"
+[dependencies.sdl2]
+version = "0.31"
+features = ["unsafe_textures"]
