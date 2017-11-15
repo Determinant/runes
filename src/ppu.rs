@@ -34,8 +34,7 @@ pub struct PPU<'a> {
     cycle: u16, /* cycle in the current scanline */
     /* rendering regs & latches */
         /* background registers */
-    bg_bitmap: [u16; 2],
-    bg_palette: [u16; 2],
+    bg_pixel: u64,
         /* background latches */
     bg_nt: u8,
     bg_attr: u8,
@@ -44,7 +43,7 @@ pub struct PPU<'a> {
     /* sprites */
     oam: [Sprite; 64],
     oam2: [usize; 8],
-    sp_bitmap: [[u8; 2]; 8],
+    sp_pixel: [u32; 8],
     sp_idx: [usize; 8],
     sp_cnt: [u8; 8],
     rendering: bool,
@@ -56,17 +55,20 @@ pub struct PPU<'a> {
 }
 
 impl<'a> PPU<'a> {
+    #[inline]
     pub fn write_ctl(&mut self, data: u8) {
         self.reg = data;
         self.ppuctl = data;
         self.t = (self.t & 0x73ff) | ((data as u16 & 3) << 10);
     }
 
+    #[inline]
     pub fn write_mask(&mut self, data: u8) {
         self.reg = data;
         self.ppumask = data;
     }
 
+    #[inline]
     pub fn read_status(&mut self) -> u8 {
         let res = (self.ppustatus & !0x1fu8) | (self.reg & 0x1f);
         self.ppustatus &= !PPU::FLAG_VBLANK;
@@ -77,11 +79,13 @@ impl<'a> PPU<'a> {
         res
     }
 
+    #[inline]
     pub fn write_oamaddr(&mut self, data: u8) {
         self.reg = data;
         self.oamaddr = data;
     }
 
+    #[inline]
     pub fn write_oamdata(&mut self, data: u8) {
         self.reg = data;
         if self.rendering { return }
@@ -92,6 +96,7 @@ impl<'a> PPU<'a> {
         }
     }
 
+    #[inline]
     pub fn read_oamdata(&self) -> u8 {
         unsafe {
             let oam_raw = transmute::<&[Sprite; 64], &[u8; 256]>(&self.oam);
@@ -99,6 +104,7 @@ impl<'a> PPU<'a> {
         }
     }
 
+    #[inline]
     pub fn write_scroll(&mut self, data: u8) {
         self.reg = data;
         let data = data as u16;
@@ -116,6 +122,7 @@ impl<'a> PPU<'a> {
         }
     }
 
+    #[inline]
     pub fn write_addr(&mut self, data: u8) {
         self.reg = data;
         let data = data as u16;
@@ -132,6 +139,7 @@ impl<'a> PPU<'a> {
         }
     }
 
+    #[inline]
     pub fn read_data(&mut self) -> u8 {
         let data = self.mem.read(self.v);
         let res = if self.v & 0x3fff < 0x3f00 {
@@ -149,6 +157,7 @@ impl<'a> PPU<'a> {
         res
     }
 
+    #[inline]
     pub fn write_data(&mut self, data: u8) {
         self.reg = data;
         self.mem.write(self.v, data);
@@ -158,6 +167,7 @@ impl<'a> PPU<'a> {
         });
     }
 
+    #[inline]
     pub fn write_oamdma(&mut self, data: u8, cpu: &mut CPU) {
         self.reg = data;
         let mut addr = (data as u16) << 8;
@@ -182,6 +192,7 @@ impl<'a> PPU<'a> {
     #[inline(always)] fn get_show_bg(&self) -> bool { (self.ppumask >> 3) & 1 == 1}
     #[inline(always)] fn get_show_sp(&self) -> bool { (self.ppumask >> 4) & 1 == 1}
     #[inline(always)] pub fn get_flag_vblank(&self) -> bool { (self.ppustatus >> 7) & 1 == 1 }
+
     const FLAG_OVERFLOW: u8 = 1 << 5;
     const FLAG_SPRITE_ZERO: u8 = 1 << 6;
     const FLAG_VBLANK: u8 = 1 << 7;
@@ -224,19 +235,16 @@ impl<'a> PPU<'a> {
     fn load_bgtile(&mut self) {
         /* load the tile bitmap to high 8 bits of bitmap,
          * assume the high 8 bits are zeros */
-        //if (!(self.bg_bitmap[0] >> 8 == 0 &&
-        //        self.bg_bitmap[1] >> 8 == 0 &&
-        //        self.bg_palette[0] >> 8 == 0 &&
-        //        self.bg_palette[1] >> 8 == 0)) {
-        //    println!("at cycle {} {}", self.scanline, self.cycle) }
-        assert!(self.bg_bitmap[0] >> 8 == 0 &&
-                self.bg_bitmap[1] >> 8 == 0 &&
-                self.bg_palette[0] >> 8 == 0 &&
-                self.bg_palette[1] >> 8 == 0);
-        self.bg_bitmap[0] |= (PPU::reverse_byte(self.bg_bit_low) as u16) << 8;
-        self.bg_bitmap[1] |= (PPU::reverse_byte(self.bg_bit_high) as u16) << 8;
-        self.bg_palette[0] |= (self.bg_attr & 1) as u16 * 0xff00;
-        self.bg_palette[1] |= ((self.bg_attr >> 1) & 1) as u16 * 0xff00;
+        assert!(self.bg_pixel >> 32 == 0);
+        let mut t: u64 = 0;
+        let mut bl = self.bg_bit_low;
+        let mut bh = self.bg_bit_high;
+        for _ in 0..8 {
+            t = (t << 4) | ((self.bg_attr << 2) | (bl & 1) | ((bh & 1) << 1)) as u64;
+            bl >>= 1;
+            bh >>= 1;
+        }
+        self.bg_pixel |= t << 32;
     }
 
     #[inline(always)]
@@ -245,11 +253,7 @@ impl<'a> PPU<'a> {
             if self.sp_idx[i] > 0xff { break }
             let c0 = *c;
             match c0 {
-                0 => {
-                    let t = &mut self.sp_bitmap[i];
-                    t[0] = t[0].wrapping_shr(1);
-                    t[1] = t[1].wrapping_shr(1);
-                },
+                0 => self.sp_pixel[i] >>= 4,
                 _ => *c = c0 - 1
             }
         }
@@ -257,12 +261,7 @@ impl<'a> PPU<'a> {
 
     #[inline(always)]
     fn shift_bgtile(&mut self) {
-        let t1 = &mut self.bg_bitmap;
-        let t2 = &mut self.bg_palette;
-        t1[0] = t1[0].wrapping_shr(1);
-        t1[1] = t1[1].wrapping_shr(1);
-        t2[0] = t2[0].wrapping_shr(1);
-        t2[1] = t2[1].wrapping_shr(1);
+        self.bg_pixel >>= 4;
     }
 
     #[inline(always)]
@@ -381,44 +380,39 @@ impl<'a> PPU<'a> {
             self.sp_cnt[i] = s.x;
             let mut low = self.mem.read(ptable | ((tidx as u16) << 4) | 0x0 | y as u16);
             let mut high = self.mem.read(ptable | ((tidx as u16) << 4) | 0x8 | y as u16);
-            if (s.attr & 0x40) != 0x40 {
+            if (s.attr & 0x40) == 0x40 {
                 low = PPU::reverse_byte(low);
                 high = PPU::reverse_byte(high);
             }
-            self.sp_bitmap[i][0] = low;
-            self.sp_bitmap[i][1] = high;
+            let attr = s.attr & 3;
+            let mut t = 0u32;
+            for _ in 0..8 {
+                t = (t << 4) | ((attr << 2) | ((high & 1) << 1) | (low & 1)) as u32;
+                high >>= 1;
+                low >>= 1;
+            }
+            self.sp_pixel[i] = t;
         }
-    }
-
-    #[inline(always)]
-    fn get_bg_pidx(&self) -> u8 {
-        if self.get_show_bg() {
-            (((self.bg_bitmap[1] >> self.x) & 1) << 1) as u8 |
-              ((self.bg_bitmap[0] >> self.x) & 1) as u8
-        } else { 0 }
-    }
-
-    #[inline(always)]
-    fn get_sp_pidx(&self, i: usize) -> u8 {
-        if self.get_show_sp() {
-            ((self.sp_bitmap[i][1] & 1) << 1) | (self.sp_bitmap[i][0] & 1)
-        } else { 0 }
     }
 
     fn render_pixel(&mut self) {
         let x = self.cycle - 1;
+        let bg = ((self.bg_pixel >> (self.x << 2)) & 0xf) as u16;
         let bg_pidx =
-            if x >= 8 || self.get_show_leftmost_bg() {self.get_bg_pidx()}
-            else {0};
+            if x >= 8 || self.get_show_leftmost_bg() {
+                if self.get_show_bg() {bg & 3} else {0}
+            } else {0};
         let mut sp_pidx = 0x0;
-        let mut sp_id = 0;
         let mut pri = 0x1;
+        let mut sp = 0;
+        let show_sp = self.get_show_sp();
         if x >= 8 || self.get_show_leftmost_sp() {
             for i in 0..8 {
                 if self.sp_idx[i] > 0xff { break }
-                let s = &self.oam[self.sp_idx[i]];
                 if self.sp_cnt[i] != 0 { continue; } /* not active */
-                match self.get_sp_pidx(i) {
+                let s = &self.oam[self.sp_idx[i]];
+                sp = if show_sp {(self.sp_pixel[i] & 0xf) as u16} else { 0 };
+                match sp & 3 {
                     0x0 => (),
                     pidx => {
                         if bg_pidx != 0 && self.sp_idx[i] == 0 &&
@@ -426,7 +420,6 @@ impl<'a> PPU<'a> {
                             self.ppustatus |= PPU::FLAG_SPRITE_ZERO; /* set sprite zero hit */
                         }
                         sp_pidx = pidx;
-                        sp_id = i;
                         pri = (s.attr >> 5) & 1;
                         break;
                     }
@@ -438,14 +431,11 @@ impl<'a> PPU<'a> {
         self.scr.put((self.cycle - 1) as u8,
                      self.scanline as u8,
                      self.mem.read(if (pri == 0 || bg_pidx == 0) && sp_pidx != 0 {
-                        0x3f10 | ((self.oam[self.sp_idx[sp_id]].attr & 3) << 2) as u16 |
-                                 sp_pidx as u16
+                        0x3f10 | sp
                      } else {
                         0x3f00 | match bg_pidx {
                             0 => 0,
-                            _ => ((((self.bg_palette[1] >> self.x) & 1) << 3) |
-                                 (((self.bg_palette[0] >> self.x) & 1) << 2)) as u16 |
-                                 bg_pidx as u16
+                            _ => bg
                         }
                      }));
     }
@@ -467,14 +457,13 @@ impl<'a> PPU<'a> {
             oamaddr,
             reg: 0,
             x: 0, v: 0, t: 0, w, cycle,
-            bg_bitmap: [0; 2],
-            bg_palette: [0; 2],
+            bg_pixel: 0,
             bg_nt: 0, bg_attr: 0,
             bg_bit_low: 0, bg_bit_high: 0,
             oam: [Sprite{y: 0, tile: 0, attr: 0, x: 0}; 64],
             oam2: [0x100; 8],
             sp_idx: [0x100; 8],
-            sp_bitmap: [[0; 2]; 8],
+            sp_pixel: [0; 8],
             sp_cnt: [0; 8],
             rendering: false,
             buffered_read,

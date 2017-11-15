@@ -19,11 +19,11 @@ use sdl2::rect::Rect;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 
-struct Window {
+struct DummyWindow {
     buff: RefCell<[[u8; 256]; 240]>
 }
 
-impl ppu::Screen for Window {
+impl ppu::Screen for DummyWindow {
     fn put(&self, x: u8, y: u8, color: u8) {
         self.buff.borrow_mut()[y as usize][x as usize] = color;
     }
@@ -75,20 +75,20 @@ impl SDLWindow {
     }
 }
 
-const PIXEL_SIZE: u32 = 4;
-const COLORS: [u32; 64] = [
-    0x666666, 0x002A88, 0x1412A7, 0x3B00A4, 0x5C007E, 0x6E0040, 0x6C0600, 0x561D00,
-    0x333500, 0x0B4800, 0x005200, 0x004F08, 0x00404D, 0x000000, 0x000000, 0x000000,
-    0xADADAD, 0x155FD9, 0x4240FF, 0x7527FE, 0xA01ACC, 0xB71E7B, 0xB53120, 0x994E00,
-    0x6B6D00, 0x388700, 0x0C9300, 0x008F32, 0x007C8D, 0x000000, 0x000000, 0x000000,
-    0xFFFEFF, 0x64B0FF, 0x9290FF, 0xC676FF, 0xF36AFF, 0xFE6ECC, 0xFE8170, 0xEA9E22,
-    0xBCBE00, 0x88D800, 0x5CE430, 0x45E082, 0x48CDDE, 0x4F4F4F, 0x000000, 0x000000,
-    0xFFFEFF, 0xC0DFFF, 0xD3D2FF, 0xE8C8FF, 0xFBC2FF, 0xFEC4EA, 0xFECCC5, 0xF7D8A5,
-    0xE4E594, 0xCFEF96, 0xBDF4AB, 0xB3F3CC, 0xB5EBF2, 0xB8B8B8, 0x000000, 0x000000,
+const PIXEL_SIZE: u32 = 2;
+const RGB_COLORS: [u32; 64] = [
+    0x666666, 0x002a88, 0x1412a7, 0x3b00a4, 0x5c007e, 0x6e0040, 0x6c0600, 0x561d00,
+    0x333500, 0x0b4800, 0x005200, 0x004f08, 0x00404d, 0x000000, 0x000000, 0x000000,
+    0xadadad, 0x155fd9, 0x4240ff, 0x7527fe, 0xa01acc, 0xb71e7b, 0xb53120, 0x994e00,
+    0x6b6d00, 0x388700, 0x0c9300, 0x008f32, 0x007c8d, 0x000000, 0x000000, 0x000000,
+    0xfffeff, 0x64b0ff, 0x9290ff, 0xc676ff, 0xf36aff, 0xfe6ecc, 0xfe8170, 0xea9e22,
+    0xbcbe00, 0x88d800, 0x5ce430, 0x45e082, 0x48cdde, 0x4f4f4f, 0x000000, 0x000000,
+    0xfffeff, 0xc0dfff, 0xd3d2ff, 0xe8c8ff, 0xfbc2ff, 0xfec4ea, 0xfeccc5, 0xf7d8a5,
+    0xe4e594, 0xcfef96, 0xbdf4ab, 0xb3f3cc, 0xb5ebf2, 0xb8b8b8, 0x000000, 0x000000,
 ];
 
 fn get_rgb(color: u8) -> Color {
-    let c = COLORS[color as usize];
+    let c = RGB_COLORS[color as usize];
     Color::RGB((c >> 16) as u8, ((c >> 8) & 0xff) as u8, (c & 0xff) as u8)
 }
 
@@ -162,19 +162,23 @@ fn main() {
     }
     let sram = vec![0; 0x4000];
     println!("read prg {}", file.read(&mut prg_rom[..]).unwrap());
+    /*
     for (i, v) in prg_rom.iter().enumerate() {
         print!("{:02x} ", v);
         if i & 15 == 15 {
             println!(" {:04x}", i);
         }
     }
+    */
     println!("read chr {}", file.read(&mut chr_rom[..]).unwrap());
+    /*
     for (i, v) in chr_rom.iter().enumerate() {
         print!("{:02x} ", v);
         if i & 15 == 15 {
             println!("");
         }
     }
+    */
     let cart = cartridge::Cartridge::new(chr_rom, prg_rom, sram, mirror);
     //let win = Window {buff: RefCell::new([[0; 256]; 240])};
     let win = SDLWindow::new();
@@ -185,33 +189,22 @@ fn main() {
     let mut cpu = mos6502::CPU::new(&mem);
     mem.init(&mut cpu, &mut ppu);
     let mut cnt = 0;
-    let mut cnt2 = 0;
-    let mut flag = false;
     loop {
-        if win.poll() {break}
+        if cnt == 1000 {
+            if win.poll() {break}
+            cnt = 0;
+        }
         cpu.step();
         //println!("cpu at 0x{:04x}", cpu.get_pc());
         while cpu.cycle > 0 {
             for _ in 0..3 {
-                cnt2 += 1;
                 if ppu.tick() {
                     println!("triggering nmi");
                     cpu.trigger_nmi();
                 }
-                if ppu.get_flag_vblank() {
-                    if !flag {
-                        println!("{} cpu {} ppu per frame", cnt, cnt2);
-                        cnt2 = 0;
-                        cnt = 0;
-                        flag = true;
-                        //pmem.dump();
-                    }
-                } else {
-                    flag = false;
-                }
             }
             cpu.cycle -= 1;
-            cnt += 1;
         }
+        cnt += 1;
     }
 }
