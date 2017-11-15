@@ -7,10 +7,11 @@ mod mapper;
 
 use std::fs::File;
 use std::io::Read;
-use core::cell::RefCell;
+use core::cell::{RefCell, UnsafeCell};
 use core::intrinsics::transmute;
 use cartridge::*;
-
+use std::time::{Instant, Duration};
+use std::thread::sleep;
 
 extern crate sdl2;
 
@@ -20,7 +21,7 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 
 struct DummyWindow {
-    buff: RefCell<[[u8; 256]; 240]>
+    buff: RefCell<[[u8; 240]; 256]>
 }
 
 impl ppu::Screen for DummyWindow {
@@ -41,12 +42,15 @@ impl ppu::Screen for DummyWindow {
 struct SDLWindow {
     canvas: RefCell<sdl2::render::WindowCanvas>,
     events: RefCell<sdl2::EventPump>,
+    timer: RefCell<sdl2::TimerSubsystem>,
+    frame_buffer: UnsafeCell<[[u8; 240]; 256]>,
 }
 
 impl SDLWindow {
     fn new() -> Self {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
+        let timer = sdl_context.timer().unwrap();
         let window = video_subsystem.window("RuNES", 256 * PIXEL_SIZE, 240 * PIXEL_SIZE)
                                     .position_centered()
                                     .opengl()
@@ -58,7 +62,9 @@ impl SDLWindow {
         canvas.present();
         SDLWindow {
             canvas: RefCell::new(canvas),
-            events: RefCell::new(sdl_context.event_pump().unwrap())
+            timer: RefCell::new(timer),
+            events: RefCell::new(sdl_context.event_pump().unwrap()),
+            frame_buffer: UnsafeCell::new([[0; 240]; 256])
         }
     }
 
@@ -94,16 +100,22 @@ fn get_rgb(color: u8) -> Color {
 
 impl ppu::Screen for SDLWindow {
     fn put(&self, x: u8, y: u8, color: u8) {
-        let mut canvas = self.canvas.borrow_mut();
-        //println!("put {} at {}, {}", color, x, y);
-        canvas.set_draw_color(get_rgb(color));
-        canvas.fill_rect(Rect::new((x as u32 * PIXEL_SIZE) as i32,
-                                   (y as u32 * PIXEL_SIZE) as i32,
-                                   PIXEL_SIZE, PIXEL_SIZE));
+        unsafe {
+            (*self.frame_buffer.get())[x as usize][y as usize] = color;
+        }
     }
 
     fn render(&self) {
         let mut canvas = self.canvas.borrow_mut();
+        let fb = unsafe{&*self.frame_buffer.get()};
+        for (x, l) in fb.iter().enumerate() {
+            for (y, c) in l.iter().enumerate() {
+                canvas.set_draw_color(get_rgb(*c));
+                canvas.fill_rect(Rect::new((x as u32 * PIXEL_SIZE) as i32,
+                                            (y as u32 * PIXEL_SIZE) as i32,
+                                            PIXEL_SIZE, PIXEL_SIZE));
+            }
+        }
         canvas.present();
         canvas.set_draw_color(Color::RGB(128, 128, 128));
         canvas.clear();
@@ -189,22 +201,34 @@ fn main() {
     let mut cpu = mos6502::CPU::new(&mem);
     mem.init(&mut cpu, &mut ppu);
     let mut cnt = 0;
+    use ppu::Screen;
+    const CYC_PER_FRAME: u32 = mos6502::CPU_FREQ / 60;
+    let duration_per_frame: Duration = Duration::from_millis(1000 / 60);
+    let mut timer = Instant::now();
     loop {
-        if cnt == 1000 {
+        if cnt >= CYC_PER_FRAME {
+            win.render();
             if win.poll() {break}
-            cnt = 0;
+            let e = timer.elapsed();
+            if duration_per_frame > e {
+                sleep(duration_per_frame - e);
+                println!("faster {}", (duration_per_frame - e).subsec_nanos() as f64 / 1e6);
+            } else {
+                println!("slower");
+            }
+            timer = Instant::now();
+            cnt -= CYC_PER_FRAME;
         }
         cpu.step();
         //println!("cpu at 0x{:04x}", cpu.get_pc());
         while cpu.cycle > 0 {
             for _ in 0..3 {
                 if ppu.tick() {
-                    println!("triggering nmi");
                     cpu.trigger_nmi();
                 }
             }
+            cnt += 1;
             cpu.cycle -= 1;
         }
-        cnt += 1;
     }
 }

@@ -72,7 +72,7 @@ impl<'a> VMem for CPUMemory<'a> {
             } else if addr < 0x4020 {
                 match addr {
                     0x4014 => ppu.write_oamdma(data, cpu),
-                    _ => println!("ignore writing for 0x{:04x}", addr)
+                    _ => ()
                 }
             } else if addr < 0x6000 {
             } else {

@@ -4,6 +4,7 @@ use mos6502::CPU;
 use core::intrinsics::transmute;
 
 pub trait Screen {
+    #[inline(always)]
     fn put(&self, x: u8, y: u8, color: u8);
     fn render(&self);
 }
@@ -538,7 +539,6 @@ impl<'a> PPU<'a> {
                 }
             }
         } else if self.scanline == 241 && cycle == 1 {
-            self.scr.render();
             if !self.early_read {
                 self.ppustatus |= PPU::FLAG_VBLANK;
             }
