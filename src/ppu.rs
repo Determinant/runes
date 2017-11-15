@@ -51,7 +51,7 @@ pub struct PPU<'a> {
     buffered_read: u8,
     early_read: bool,
     /* IO */
-    mem: &'a PPUMemory<'a>,
+    mem: PPUMemory<'a>,
     scr: &'a Screen,
 }
 
@@ -441,7 +441,7 @@ impl<'a> PPU<'a> {
                      }));
     }
 
-    pub fn new(mem: &'a PPUMemory<'a>, scr: &'a Screen) -> Self {
+    pub fn new(mem: PPUMemory<'a>, scr: &'a Screen) -> Self {
         let ppuctl = 0x00;
         let ppumask = 0x00;
         let ppustatus = 0xa0;

@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use memory::VMem;
+use memory::{CPUMemory, VMem};
 pub const CPU_FREQ: u32 = 1789773;
 macro_rules! make_optable {
     ($x:ident, $t: ty) => (pub const $x: [$t; 0x100] = [
@@ -233,6 +233,7 @@ macro_rules! read16 {
 }
 
 mod ops {
+    use memory::VMem;
     use mos6502::*;
     make_optable!(OPS, fn (&mut CPU));
 
@@ -595,6 +596,7 @@ mod ops {
 }
 
 mod addr {
+    use memory::VMem;
     use mos6502::{CPU};
     make_addrtable!(ADDR_MODES, fn (&mut CPU) -> u8);
 
@@ -686,7 +688,7 @@ pub struct CPU<'a> {
     imm_val: u8,
     pub cycle: u32,
     int: Option<IntType>,
-    pub mem: &'a VMem
+    pub mem: CPUMemory<'a>
 }
 
 macro_rules! make_int {
@@ -712,7 +714,7 @@ impl<'a> CPU<'a> {
     #[inline(always)] pub fn get_over(&self) -> u8 { (self.status >> 6) & 1 }
     #[inline(always)] pub fn get_neg(&self) -> u8 { (self.status >> 7) & 1 }
 
-    pub fn new(mem: &'a VMem) -> Self {
+    pub fn new(mem: CPUMemory<'a>) -> Self {
         let pc = read16!(mem, RESET_VECTOR as u16);
         /* nes power up state */
         let a = 0;

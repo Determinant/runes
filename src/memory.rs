@@ -18,18 +18,15 @@ pub struct CPUMemory<'a> {
 }
 
 impl<'a> CPUMemory<'a> {
-    pub fn new(mapper: &'a VMem) -> Self {
+    pub fn new(ppu: *mut PPU<'a>, mapper: &'a VMem) -> Self {
         CPUMemory{sram: UnsafeCell::new([0; 2048]),
                   cpu: Cell::new(null_mut()),
-                  ppu: Cell::new(null_mut()),
+                  ppu: Cell::new(ppu),
                   mapper}
     }
 
-    pub fn init(&self,
-               cpu: *mut CPU<'a>,
-               ppu: *mut PPU<'a>) {
+    pub fn init(&self, cpu: *mut CPU<'a>) {
         self.cpu.set(cpu);
-        self.ppu.set(ppu);
     }
 }
 

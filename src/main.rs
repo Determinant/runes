@@ -214,11 +214,10 @@ fn main() {
     //let win = Window {buff: RefCell::new([[0; 256]; 240])};
     let win = SDLWindow::new();
     let mapper = mapper::Mapper2::new(&cart);
-    let pmem = memory::PPUMemory::new(&mapper, &cart);
-    let mem = memory::CPUMemory::new(&mapper);
-    let mut ppu = ppu::PPU::new(&pmem, &win);
-    let mut cpu = mos6502::CPU::new(&mem);
-    mem.init(&mut cpu, &mut ppu);
+    let mut ppu = ppu::PPU::new(memory::PPUMemory::new(&mapper, &cart), &win);
+    let mut cpu = mos6502::CPU::new(memory::CPUMemory::new(&mut ppu, &mapper));
+    let ptr = &mut cpu as *mut mos6502::CPU;
+    cpu.mem.init(ptr);
     let mut cnt = 0;
     use ppu::Screen;
     const CYC_PER_FRAME: u32 = mos6502::CPU_FREQ / 60;
