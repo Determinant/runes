@@ -35,49 +35,48 @@ impl<'a> CPUMemory<'a> {
 
 impl<'a> VMem for CPUMemory<'a> {
     fn read(&self, addr: u16) -> u8 {
-        match addr {
-            _ => if addr < 0x2000 {
-                unsafe{(*self.sram.get())[(addr & 0x07ff) as usize]}
-            } else if addr < 0x4000 {
-                let ppu = unsafe {&mut *self.ppu.get()};
-                match addr & 0x7 {
-                    0x2 => ppu.read_status(),
-                    0x4 => ppu.read_oamdata(),
-                    0x7 => ppu.read_data(),
-                    _ => 0
-                }
-            } else if addr < 0x6000 {
-                0
-            } else {
-                self.mapper.read(addr)
+        if addr < 0x2000 {
+            unsafe{(*self.sram.get())[(addr & 0x07ff) as usize]}
+        } else if addr < 0x4000 {
+            let ppu = unsafe {&mut *self.ppu.get()};
+            match addr & 0x7 {
+                0x2 => ppu.read_status(),
+                0x4 => ppu.read_oamdata(),
+                0x7 => ppu.read_data(),
+                _ => 0
             }
+        } else if addr < 0x6000 {
+            0
+        } else {
+            self.mapper.read(addr)
         }
     }
+
     fn write(&self, addr: u16, data: u8) {
-            let ppu = unsafe {&mut *self.ppu.get()};
-            let cpu = unsafe {&mut *self.cpu.get()};
-            if addr < 0x2000 {
-                unsafe{(*self.sram.get())[(addr & 0x07ff) as usize] = data;}
-            } else if addr < 0x4000 {
-                match addr & 0x7 {
-                    0x0 => ppu.write_ctl(data),
-                    0x1 => ppu.write_mask(data),
-                    0x3 => ppu.write_oamaddr(data),
-                    0x4 => ppu.write_oamdata(data),
-                    0x5 => ppu.write_scroll(data),
-                    0x6 => ppu.write_addr(data),
-                    0x7 => ppu.write_data(data),
-                    _ => panic!("invalid ppu reg write access at 0x{:04x}", addr)
-                }
-            } else if addr < 0x4020 {
-                match addr {
-                    0x4014 => ppu.write_oamdma(data, cpu),
-                    _ => ()
-                }
-            } else if addr < 0x6000 {
-            } else {
-                self.mapper.write(addr, data)
+        let ppu = unsafe {&mut *self.ppu.get()};
+        let cpu = unsafe {&mut *self.cpu.get()};
+        if addr < 0x2000 {
+            unsafe{(*self.sram.get())[(addr & 0x07ff) as usize] = data;}
+        } else if addr < 0x4000 {
+            match addr & 0x7 {
+                0x0 => ppu.write_ctl(data),
+                0x1 => ppu.write_mask(data),
+                0x3 => ppu.write_oamaddr(data),
+                0x4 => ppu.write_oamdata(data),
+                0x5 => ppu.write_scroll(data),
+                0x6 => ppu.write_addr(data),
+                0x7 => ppu.write_data(data),
+                _ => panic!("invalid ppu reg write access at 0x{:04x}", addr)
             }
+        } else if addr < 0x4020 {
+            match addr {
+                0x4014 => ppu.write_oamdma(data, cpu),
+                _ => ()
+            }
+        } else if addr < 0x6000 {
+        } else {
+            self.mapper.write(addr, data)
+        }
     }
 }
 

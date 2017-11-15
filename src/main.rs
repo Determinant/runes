@@ -205,29 +205,29 @@ fn main() {
     const CYC_PER_FRAME: u32 = mos6502::CPU_FREQ / 60;
     let duration_per_frame: Duration = Duration::from_millis(1000 / 60);
     let mut timer = Instant::now();
+    'main:
     loop {
-        if cnt >= CYC_PER_FRAME {
-            win.render();
-            if win.poll() {break}
-            let e = timer.elapsed();
-            if duration_per_frame > e {
-                sleep(duration_per_frame - e);
-                println!("faster {}", (duration_per_frame - e).subsec_nanos() as f64 / 1e6);
-            } else {
-                println!("slower");
-            }
-            timer = Instant::now();
-            cnt -= CYC_PER_FRAME;
-        }
         cpu.step();
         //println!("cpu at 0x{:04x}", cpu.get_pc());
         while cpu.cycle > 0 {
-            for _ in 0..3 {
-                if ppu.tick() {
-                    cpu.trigger_nmi();
-                }
+            if ppu.tick() || ppu.tick() || ppu.tick() {
+                cpu.trigger_nmi();
             }
             cnt += 1;
+            if cnt >= CYC_PER_FRAME {
+                win.render();
+                if win.poll() {break 'main}
+                let e = timer.elapsed();
+                if duration_per_frame > e {
+                    let diff = duration_per_frame - e;
+                    sleep(diff);
+                    println!("{} faster", diff.subsec_nanos() as f64 / 1e6);
+                } else {
+                    println!("{} slower", (e - duration_per_frame).subsec_nanos() as f64 / 1e6);
+                }
+                timer = Instant::now();
+                cnt -= CYC_PER_FRAME;
+            }
             cpu.cycle -= 1;
         }
     }
