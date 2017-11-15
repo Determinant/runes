@@ -17,11 +17,31 @@ extern crate sdl2;
 
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
+use sdl2::pixels::PixelFormatEnum;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 
+const PIXEL_SIZE: u32 = 2;
+const RGB_COLORS: [u32; 64] = [
+    0x666666, 0x002a88, 0x1412a7, 0x3b00a4, 0x5c007e, 0x6e0040, 0x6c0600, 0x561d00,
+    0x333500, 0x0b4800, 0x005200, 0x004f08, 0x00404d, 0x000000, 0x000000, 0x000000,
+    0xadadad, 0x155fd9, 0x4240ff, 0x7527fe, 0xa01acc, 0xb71e7b, 0xb53120, 0x994e00,
+    0x6b6d00, 0x388700, 0x0c9300, 0x008f32, 0x007c8d, 0x000000, 0x000000, 0x000000,
+    0xfffeff, 0x64b0ff, 0x9290ff, 0xc676ff, 0xf36aff, 0xfe6ecc, 0xfe8170, 0xea9e22,
+    0xbcbe00, 0x88d800, 0x5ce430, 0x45e082, 0x48cdde, 0x4f4f4f, 0x000000, 0x000000,
+    0xfffeff, 0xc0dfff, 0xd3d2ff, 0xe8c8ff, 0xfbc2ff, 0xfec4ea, 0xfeccc5, 0xf7d8a5,
+    0xe4e594, 0xcfef96, 0xbdf4ab, 0xb3f3cc, 0xb5ebf2, 0xb8b8b8, 0x000000, 0x000000,
+];
+
+const PIX_WIDTH: usize = 256;
+const PIX_HEIGHT: usize = 240;
+const FB_PITCH: usize = PIX_WIDTH * 3 * (PIXEL_SIZE as usize);
+const FB_SIZE: usize = PIX_HEIGHT * FB_PITCH * (PIXEL_SIZE as usize);
+const WIN_WIDTH: u32 = PIX_WIDTH as u32 * PIXEL_SIZE;
+const WIN_HEIGHT: u32 = PIX_HEIGHT as u32 * PIXEL_SIZE;
+
 struct DummyWindow {
-    buff: RefCell<[[u8; 240]; 256]>
+    buff: RefCell<[[u8; PIX_HEIGHT]; PIX_WIDTH]>
 }
 
 impl ppu::Screen for DummyWindow {
@@ -42,29 +62,29 @@ impl ppu::Screen for DummyWindow {
 struct SDLWindow {
     canvas: RefCell<sdl2::render::WindowCanvas>,
     events: RefCell<sdl2::EventPump>,
-    timer: RefCell<sdl2::TimerSubsystem>,
-    frame_buffer: UnsafeCell<[[u8; 240]; 256]>,
+    frame_buffer: UnsafeCell<[u8; FB_SIZE]>,
+    texture_creator: sdl2::render::TextureCreator<sdl2::video::WindowContext>,
 }
 
 impl SDLWindow {
     fn new() -> Self {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
-        let timer = sdl_context.timer().unwrap();
-        let window = video_subsystem.window("RuNES", 256 * PIXEL_SIZE, 240 * PIXEL_SIZE)
+        let window = video_subsystem.window("RuNES", WIN_WIDTH, WIN_HEIGHT)
                                     .position_centered()
                                     .opengl()
                                     .build()
                                     .unwrap();
         let mut canvas = window.into_canvas().build().unwrap();
+        let texture_creator = canvas.texture_creator();
         canvas.set_draw_color(Color::RGB(255, 255, 255));
         canvas.clear();
         canvas.present();
         SDLWindow {
             canvas: RefCell::new(canvas),
-            timer: RefCell::new(timer),
             events: RefCell::new(sdl_context.event_pump().unwrap()),
-            frame_buffer: UnsafeCell::new([[0; 240]; 256])
+            frame_buffer: UnsafeCell::new([0; FB_SIZE]),
+            texture_creator,
         }
     }
 
@@ -81,41 +101,39 @@ impl SDLWindow {
     }
 }
 
-const PIXEL_SIZE: u32 = 2;
-const RGB_COLORS: [u32; 64] = [
-    0x666666, 0x002a88, 0x1412a7, 0x3b00a4, 0x5c007e, 0x6e0040, 0x6c0600, 0x561d00,
-    0x333500, 0x0b4800, 0x005200, 0x004f08, 0x00404d, 0x000000, 0x000000, 0x000000,
-    0xadadad, 0x155fd9, 0x4240ff, 0x7527fe, 0xa01acc, 0xb71e7b, 0xb53120, 0x994e00,
-    0x6b6d00, 0x388700, 0x0c9300, 0x008f32, 0x007c8d, 0x000000, 0x000000, 0x000000,
-    0xfffeff, 0x64b0ff, 0x9290ff, 0xc676ff, 0xf36aff, 0xfe6ecc, 0xfe8170, 0xea9e22,
-    0xbcbe00, 0x88d800, 0x5ce430, 0x45e082, 0x48cdde, 0x4f4f4f, 0x000000, 0x000000,
-    0xfffeff, 0xc0dfff, 0xd3d2ff, 0xe8c8ff, 0xfbc2ff, 0xfec4ea, 0xfeccc5, 0xf7d8a5,
-    0xe4e594, 0xcfef96, 0xbdf4ab, 0xb3f3cc, 0xb5ebf2, 0xb8b8b8, 0x000000, 0x000000,
-];
-
-fn get_rgb(color: u8) -> Color {
+#[inline]
+fn get_rgb(color: u8) -> (u8, u8, u8) {
     let c = RGB_COLORS[color as usize];
-    Color::RGB((c >> 16) as u8, ((c >> 8) & 0xff) as u8, (c & 0xff) as u8)
+    ((c >> 16) as u8, ((c >> 8) & 0xff) as u8, (c & 0xff) as u8)
 }
 
 impl ppu::Screen for SDLWindow {
     fn put(&self, x: u8, y: u8, color: u8) {
         unsafe {
-            (*self.frame_buffer.get())[x as usize][y as usize] = color;
+            let (r, g, b) = get_rgb(color);
+            let mut base = ((y as u32 * PIXEL_SIZE) as usize * FB_PITCH) +
+                             (x as u32 * 3 * PIXEL_SIZE) as usize;
+            for _ in 0..PIXEL_SIZE {
+                let slice = &mut (*self.frame_buffer.get())[base..base + 3 * PIXEL_SIZE as usize];
+                let mut j = 0;
+                for _ in 0..PIXEL_SIZE {
+                    slice[j] = r;
+                    slice[j + 1] = g;
+                    slice[j + 2] = b;
+                    j += 3;
+                }
+                base += FB_PITCH;
+            }
         }
     }
 
     fn render(&self) {
         let mut canvas = self.canvas.borrow_mut();
         let fb = unsafe{&*self.frame_buffer.get()};
-        for (x, l) in fb.iter().enumerate() {
-            for (y, c) in l.iter().enumerate() {
-                canvas.set_draw_color(get_rgb(*c));
-                canvas.fill_rect(Rect::new((x as u32 * PIXEL_SIZE) as i32,
-                                            (y as u32 * PIXEL_SIZE) as i32,
-                                            PIXEL_SIZE, PIXEL_SIZE));
-            }
-        }
+        let mut texture = self.texture_creator.create_texture_streaming(
+                        PixelFormatEnum::RGB24, WIN_WIDTH, WIN_HEIGHT).unwrap();
+        texture.update(Rect::new(0, 0, WIN_WIDTH, WIN_HEIGHT), fb, FB_PITCH).unwrap();
+        canvas.copy(&texture, None, Some(Rect::new(0, 0, WIN_WIDTH, WIN_HEIGHT))).unwrap();
         canvas.present();
         canvas.set_draw_color(Color::RGB(128, 128, 128));
         canvas.clear();
@@ -157,7 +175,7 @@ fn main() {
              mapper_id);
     if header.flags6 & 0x04 == 0x04 {
         let mut trainer: [u8; 512] = unsafe{std::mem::uninitialized()};
-        file.read(&mut trainer[..]);
+        file.read(&mut trainer[..]).unwrap();
         println!("skipping trainer");
     }
     
