@@ -89,6 +89,7 @@ impl SDLWindow {
         }
     }
 
+    #[inline(always)]
     fn poll(&self) -> bool {
         for event in self.events.borrow_mut().poll_iter() {
             match event {
@@ -239,9 +240,9 @@ fn main() {
                 if duration_per_frame > e {
                     let diff = duration_per_frame - e;
                     sleep(diff);
-                    println!("{} faster", diff.subsec_nanos() as f64 / 1e6);
+                    //println!("{} faster", diff.subsec_nanos() as f64 / 1e6);
                 } else {
-                    println!("{} slower", (e - duration_per_frame).subsec_nanos() as f64 / 1e6);
+                    //println!("{} slower", (e - duration_per_frame).subsec_nanos() as f64 / 1e6);
                 }
                 timer = Instant::now();
                 cnt -= CYC_PER_FRAME;

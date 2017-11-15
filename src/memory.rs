@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use ppu::{PPU, PMem};
+use ppu::PPU;
 use mos6502::CPU;
 use cartridge::{MirrorType, Cartridge};
 use core::cell::{UnsafeCell, Cell};
@@ -133,31 +133,31 @@ fn get_mirror_palette(addr: u16) -> u16 {
     } else { addr }
 }
 
-impl<'a> PMem for PPUMemory<'a> {
+impl<'a> PPUMemory<'a> {
     #[inline(always)]
-    fn read_nametable(&self, addr: u16) -> u8 {
+    pub fn read_nametable(&self, addr: u16) -> u8 {
         let kind = self.cart.mirror_type;
         unsafe {(*self.nametable.get())[(get_mirror_addr(kind, addr) & 0x7ff) as usize]}
     }
 
     #[inline(always)]
-    fn read_palette(&self, addr: u16) -> u8 { unsafe {
+    pub fn read_palette(&self, addr: u16) -> u8 { unsafe {
         (*self.palette.get())[get_mirror_palette(addr) as usize]
     }}
 
     #[inline(always)]
-    fn write_nametable(&self, addr: u16, data: u8) {
+    pub fn write_nametable(&self, addr: u16, data: u8) {
         let kind = self.cart.mirror_type;
         unsafe {(*self.nametable.get())[(get_mirror_addr(kind, addr) & 0x7ff) as usize] = data}
     }
 
     #[inline(always)]
-    fn write_palette(&self, addr: u16, data: u8) { unsafe {
+    pub fn write_palette(&self, addr: u16, data: u8) { unsafe {
         (*self.palette.get())[get_mirror_palette(addr) as usize] = data;
     }}
 
     #[inline(always)]
-    fn read_mapper(&self, addr: u16) -> u8 {
+    pub fn read_mapper(&self, addr: u16) -> u8 {
         self.mapper.read(addr)
     }
 

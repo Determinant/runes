@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use memory::VMem;
+use memory::{VMem, PPUMemory};
 use mos6502::CPU;
 use core::intrinsics::transmute;
 
@@ -7,15 +7,6 @@ pub trait Screen {
     #[inline(always)]
     fn put(&self, x: u8, y: u8, color: u8);
     fn render(&self);
-}
-
-pub trait PMem: VMem {
-    fn read_nametable(&self, addr: u16) -> u8;
-    fn read_palette(&self, addr: u16) -> u8;
-    fn write_nametable(&self, addr: u16, data: u8);
-    fn write_palette(&self, addr: u16, data: u8);
-    fn read_mapper(&self, addr: u16) -> u8;
-    fn write_mapper(&self, addr: u16, data: u8);
 }
 
 #[repr(C, packed)]
@@ -60,7 +51,7 @@ pub struct PPU<'a> {
     buffered_read: u8,
     early_read: bool,
     /* IO */
-    mem: &'a PMem,
+    mem: &'a PPUMemory<'a>,
     scr: &'a Screen,
 }
 
@@ -313,12 +304,12 @@ impl<'a> PPU<'a> {
 
     #[inline(always)]
     fn clear_sprite(&mut self) {
-        if self.scanline == 261 { return }
+        assert!(self.scanline != 261);
         self.oam2 = [0x100; 8];
     }
 
     fn eval_sprite(&mut self) {
-        if self.scanline == 261 { return }
+        assert!(self.scanline != 261);
         /* we use scanline here because s.y is the (actual y) - 1 */
         let mut nidx = 0;
         let mut n = 0;
@@ -450,7 +441,7 @@ impl<'a> PPU<'a> {
                      }));
     }
 
-    pub fn new(mem: &'a PMem, scr: &'a Screen) -> Self {
+    pub fn new(mem: &'a PPUMemory<'a>, scr: &'a Screen) -> Self {
         let ppuctl = 0x00;
         let ppumask = 0x00;
         let ppustatus = 0xa0;
@@ -499,20 +490,16 @@ impl<'a> PPU<'a> {
             return false;
         }
         let visible_line = self.scanline < 240;
-        let pre_render = self.scanline == 261;
-        self.rendering = pre_render || visible_line;
-        if pre_render && cycle == 1 {
-            /* clear vblank, sprite zero hit & overflow */
-            self.ppustatus &= !(PPU::FLAG_VBLANK |
-                                PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
-
-        } else if self.rendering && (self.get_show_bg() || self.get_show_sp()) {
-            if pre_render && 279 < cycle && cycle < 305 {
+        let pre_line = self.scanline == 261;
+        self.rendering = pre_line || visible_line;
+        if self.rendering && (self.get_show_bg() || self.get_show_sp()) {
+            if pre_line && 279 < cycle && cycle < 305 {
                 self.reset_y();
             } else {
                 let visible_cycle = 0 < cycle && cycle < 257; /* 1..256 */
-                let fetch_cycle = visible_cycle || (320 < cycle && cycle < 337);
-                if fetch_cycle { /* 1..256 and 321..336 */
+                let prefetch_cycle = 320 < cycle && cycle < 337;
+                let fetch_cycle = visible_cycle || prefetch_cycle;
+                if (visible_line && fetch_cycle) || (pre_line && prefetch_cycle) {
                     match cycle & 0x7 {
                         1 => {
                             self.load_bgtile();
@@ -530,21 +517,22 @@ impl<'a> PPU<'a> {
                         256 => self.wrapping_inc_y(),
                         _ => ()
                     }
-                    if visible_line && visible_cycle {
+                    if visible_cycle {
                         self.render_pixel();
                         self.shift_sprites();
                     }
                     self.shift_bgtile();
-                } else if cycle > 336 { /* 337..340 */
-                    if cycle & 1 == 1 {
-                        self.fetch_nametable_byte();
-                    }
                 } else if cycle == 257 {
                     /* we don't emulate fetch to per cycle precision because all data are fetched
                      * from the secondary OAM which is not subject to any change during this
                      * scanline */
                     self.reset_cx();
                     self.fetch_sprite();
+                }
+                if pre_line && cycle == 1 {
+                    /* clear vblank, sprite zero hit & overflow */
+                    self.ppustatus &= !(PPU::FLAG_VBLANK |
+                                        PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
                 }
             }
         } else if self.scanline == 241 && cycle == 1 {
