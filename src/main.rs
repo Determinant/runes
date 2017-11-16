@@ -62,18 +62,30 @@ impl ppu::Screen for DummyWindow {
 }
 
 struct SDLWindow<'a> {
-    canvas: RefCell<sdl2::render::WindowCanvas>,
-    events: RefCell<sdl2::EventPump>,
+    canvas: UnsafeCell<sdl2::render::WindowCanvas>,
+    events: UnsafeCell<sdl2::EventPump>,
     frame_buffer: UnsafeCell<[u8; FB_SIZE]>,
     texture: UnsafeCell<sdl2::render::Texture>,
     timer: Cell<Instant>,
     duration_per_frame: Duration,
     p1_button_states: UnsafeCell<[bool; 8]>,
-    p1_ctl: &'a Joystick
+    p1_ctl: &'a Joystick,
+    p1_keymap: UnsafeCell<[Button; 256]>,
+}
+
+macro_rules! gen_keymap {
+    ($tab: ident, [$($x: expr, $y: expr), *]) => {
+        {
+            $(
+                $tab[($x as usize) & 0xff] = $y;
+            )*
+        }
+    };
 }
 
 impl<'a> SDLWindow<'a> {
     fn new(p1_ctl: &'a Joystick) -> Self {
+        use Keycode::*;
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
         let window = video_subsystem.window("RuNES", WIN_WIDTH, WIN_HEIGHT)
@@ -88,41 +100,47 @@ impl<'a> SDLWindow<'a> {
         canvas.set_draw_color(Color::RGB(255, 255, 255));
         canvas.clear();
         canvas.present();
-        SDLWindow {
-            canvas: RefCell::new(canvas),
-            events: RefCell::new(sdl_context.event_pump().unwrap()),
+        let res = SDLWindow {
+            canvas: UnsafeCell::new(canvas),
+            events: UnsafeCell::new(sdl_context.event_pump().unwrap()),
             frame_buffer: UnsafeCell::new([0; FB_SIZE]),
             texture: UnsafeCell::new(texture_creator.create_texture_streaming(
                         PixelFormatEnum::RGB24, WIN_WIDTH, WIN_HEIGHT).unwrap()),
             timer: Cell::new(Instant::now()),
             duration_per_frame: Duration::from_millis(1000 / 60),
             p1_button_states: UnsafeCell::new([false; 8]),
-            p1_ctl,
-        }
+            p1_ctl, p1_keymap: UnsafeCell::new([Button::Null; 256])
+        };
+        let keymap = unsafe{&mut *res.p1_keymap.get()};
+        gen_keymap!(keymap, [I, Button::Up,
+                             K, Button::Down,
+                             J, Button::Left,
+                             L, Button::Right,
+                             Z, Button::A,
+                             X, Button::B,
+                             Return, Button::Start,
+                             S, Button::Select,
+                             Up, Button::Up,
+                             Down, Button::Down,
+                             Left, Button::Left,
+                             Right, Button::Right
+                             ]);
+        res
     }
 
-    #[inline(always)]
+    #[inline]
     fn poll(&self) -> bool {
         use Keycode::*;
         let p1_button_states = unsafe {&mut *self.p1_button_states.get()};
-        for event in self.events.borrow_mut().poll_iter() {
+        let p1_keymap = unsafe {&mut *self.p1_keymap.get()};
+        let events = unsafe {&mut *self.events.get()};
+        for event in events.poll_iter() {
             match event {
                 Event::Quit {..} | Event::KeyDown { keycode: Some(Escape), .. } => {
                     return true;
                 },
                 Event::KeyDown { keycode: Some(c), .. } => {
-                    let p = match c {
-                        I => Button::Up,
-                        K => Button::Down,
-                        J => Button::Left,
-                        L => Button::Right,
-                        Z => Button::A,
-                        X => Button::B,
-                        Return => Button::Start,
-                        S => Button::Select,
-                        _ => Button::Null
-                    };
-                    match p {
+                    match p1_keymap[(c as usize) & 0xff] {
                         Button::Null => (),
                         i => {
                             p1_button_states[i as usize] = true;
@@ -131,18 +149,7 @@ impl<'a> SDLWindow<'a> {
                     }
                 },
                 Event::KeyUp { keycode: Some(c), .. } => {
-                    let p = match c {
-                        I => Button::Up,
-                        K => Button::Down,
-                        J => Button::Left,
-                        L => Button::Right,
-                        Z => Button::A,
-                        X => Button::B,
-                        Return => Button::Start,
-                        S => Button::Select,
-                        _ => Button::Null
-                    };
-                    match p {
+                    match p1_keymap[(c as usize) & 0xff] {
                         Button::Null => (),
                         i => {
                             p1_button_states[i as usize] = false;
@@ -184,7 +191,7 @@ impl<'a> ppu::Screen for SDLWindow<'a> {
     }
 
     fn render(&self) {
-        let mut canvas = self.canvas.borrow_mut();
+        let canvas = unsafe{&mut *self.canvas.get()};
         let fb = unsafe{&*self.frame_buffer.get()};
         let texture = unsafe{&mut *self.texture.get()};
         texture.update(None, fb, FB_PITCH).unwrap();
