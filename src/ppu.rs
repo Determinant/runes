@@ -108,9 +108,6 @@ impl<'a> PPU<'a> {
     pub fn write_scroll(&mut self, data: u8) {
         self.reg = data;
         let data = data as u16;
-        if !(!(self.get_show_bg() || self.get_show_sp()) || self.get_flag_vblank()) {
-            println!("writing to scroll {} {}", self.scanline, self.cycle);
-        }
         match self.w {
             false => {
                 self.t = (self.t & 0x7fe0) | (data >> 3);
@@ -540,6 +537,7 @@ impl<'a> PPU<'a> {
             if !self.early_read {
                 self.ppustatus |= PPU::FLAG_VBLANK;
             }
+            self.scr.render();
             self.cycle += 1;
             self.early_read = false;
             return !self.early_read && self.get_flag_nmi(); /* trigger cpu's NMI */

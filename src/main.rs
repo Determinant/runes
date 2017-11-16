@@ -7,7 +7,7 @@ mod mapper;
 
 use std::fs::File;
 use std::io::Read;
-use core::cell::{RefCell, UnsafeCell};
+use core::cell::{Cell, RefCell, UnsafeCell};
 use core::intrinsics::transmute;
 use cartridge::*;
 use std::time::{Instant, Duration};
@@ -21,7 +21,7 @@ use sdl2::pixels::PixelFormatEnum;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 
-const PIXEL_SIZE: u32 = 2;
+const PIXEL_SIZE: u32 = 3;
 const RGB_COLORS: [u32; 64] = [
     0x666666, 0x002a88, 0x1412a7, 0x3b00a4, 0x5c007e, 0x6e0040, 0x6c0600, 0x561d00,
     0x333500, 0x0b4800, 0x005200, 0x004f08, 0x00404d, 0x000000, 0x000000, 0x000000,
@@ -63,7 +63,9 @@ struct SDLWindow {
     canvas: RefCell<sdl2::render::WindowCanvas>,
     events: RefCell<sdl2::EventPump>,
     frame_buffer: UnsafeCell<[u8; FB_SIZE]>,
-    texture: UnsafeCell<sdl2::render::Texture>
+    texture: UnsafeCell<sdl2::render::Texture>,
+    timer: Cell<Instant>,
+    duration_per_frame: Duration
 }
 
 impl SDLWindow {
@@ -75,7 +77,9 @@ impl SDLWindow {
                                     .opengl()
                                     .build()
                                     .unwrap();
-        let mut canvas = window.into_canvas().build().unwrap();
+        let mut canvas = window.into_canvas()
+                                    .accelerated()
+                                    .build().unwrap();
         let texture_creator = canvas.texture_creator();
         canvas.set_draw_color(Color::RGB(255, 255, 255));
         canvas.clear();
@@ -85,7 +89,9 @@ impl SDLWindow {
             events: RefCell::new(sdl_context.event_pump().unwrap()),
             frame_buffer: UnsafeCell::new([0; FB_SIZE]),
             texture: UnsafeCell::new(texture_creator.create_texture_streaming(
-                        PixelFormatEnum::RGB24, WIN_WIDTH, WIN_HEIGHT).unwrap())
+                        PixelFormatEnum::RGB24, WIN_WIDTH, WIN_HEIGHT).unwrap()),
+            timer: Cell::new(Instant::now()),
+            duration_per_frame: Duration::from_millis(1000 / 60)
         }
     }
 
@@ -134,10 +140,20 @@ impl ppu::Screen for SDLWindow {
         let fb = unsafe{&*self.frame_buffer.get()};
         let texture = unsafe{&mut *self.texture.get()};
         texture.update(None, fb, FB_PITCH).unwrap();
+        canvas.clear();
         canvas.copy(&texture, None, Some(Rect::new(0, 0, WIN_WIDTH, WIN_HEIGHT))).unwrap();
         canvas.present();
+        if self.poll() {std::process::exit(0);}
+        let e = self.timer.get().elapsed();
+        if self.duration_per_frame > e {
+            let diff = self.duration_per_frame - e;
+            sleep(diff);
+            //println!("{} faster", diff.subsec_nanos() as f64 / 1e6);
+        } else {
+            //println!("{} slower", (e - duration_per_frame).subsec_nanos() as f64 / 1e6);
+        }
+        self.timer.set(Instant::now());
         //canvas.set_draw_color(Color::RGB(128, 128, 128));
-        canvas.clear();
     }
 }
 
@@ -218,31 +234,9 @@ fn main() {
     let mut cpu = mos6502::CPU::new(memory::CPUMemory::new(&mut ppu, &mapper));
     let ptr = &mut cpu as *mut mos6502::CPU;
     cpu.mem.init(ptr);
-    let mut cnt = 0;
-    use ppu::Screen;
-    const CYC_PER_FRAME: u32 = mos6502::CPU_FREQ / 60;
-    let duration_per_frame: Duration = Duration::from_millis(1000 / 60);
-    let mut timer = Instant::now();
-    'main:
     loop {
         cpu.step();
-        //println!("cpu at 0x{:04x}", cpu.get_pc());
         while cpu.cycle > 0 {
-            cnt += 1;
-            if cnt >= CYC_PER_FRAME {
-                win.render();
-                if win.poll() {break 'main}
-                let e = timer.elapsed();
-                if duration_per_frame > e {
-                    let diff = duration_per_frame - e;
-                    sleep(diff);
-                    println!("{} faster", diff.subsec_nanos() as f64 / 1e6);
-                } else {
-                    println!("{} slower", (e - duration_per_frame).subsec_nanos() as f64 / 1e6);
-                }
-                timer = Instant::now();
-                cnt -= CYC_PER_FRAME;
-            }
 
             if ppu.tick() || ppu.tick() || ppu.tick() {
                 cpu.trigger_nmi();
