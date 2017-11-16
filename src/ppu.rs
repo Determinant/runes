@@ -179,11 +179,9 @@ impl<'a> PPU<'a> {
                 self.oamaddr = self.oamaddr.wrapping_add(1);
             }
         }
-        /*
         cpu.cycle += 1;
         cpu.cycle += cpu.cycle & 1;
         cpu.cycle += 512;
-        */
     }
 
     #[inline(always)] fn get_spritesize(&self) -> u8 {(self.ppuctl >> 5) & 1}
