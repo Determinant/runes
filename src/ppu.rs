@@ -32,11 +32,12 @@ pub struct PPU<'a> {
     v: u16, /* current vram addr */
     t: u16, /* temporary vram addr */
     w: bool, /* first/second write toggle */
+    f: bool, /* if it is an odd frame */
     cycle: u16, /* cycle in the current scanline */
     /* rendering regs & latches */
-        /* background registers */
+        /* background register (current two tiles) */
     bg_pixel: u64,
-        /* background latches */
+        /* background latches for next tile */
     bg_nt: u8,
     bg_attr: u8,
     bg_bit_low: u8,
@@ -178,9 +179,11 @@ impl<'a> PPU<'a> {
                 self.oamaddr = self.oamaddr.wrapping_add(1);
             }
         }
+        /*
         cpu.cycle += 1;
         cpu.cycle += cpu.cycle & 1;
         cpu.cycle += 512;
+        */
     }
 
     #[inline(always)] fn get_spritesize(&self) -> u8 {(self.ppuctl >> 5) & 1}
@@ -443,7 +446,6 @@ impl<'a> PPU<'a> {
         let ppumask = 0x00;
         let ppustatus = 0xa0;
         let oamaddr = 0x00;
-        let w = false;
         let buffered_read = 0x00;
         let cycle = 370;
         let scanline = 240;
@@ -454,7 +456,7 @@ impl<'a> PPU<'a> {
             ppustatus,
             oamaddr,
             reg: 0,
-            x: 0, v: 0, t: 0, w, cycle,
+            x: 0, v: 0, t: 0, w: false, f: true, cycle,
             bg_pixel: 0,
             bg_nt: 0, bg_attr: 0,
             bg_bit_low: 0, bg_bit_high: 0,
@@ -483,7 +485,7 @@ impl<'a> PPU<'a> {
     pub fn tick(&mut self) -> bool {
         let cycle = self.cycle;
         if cycle == 0 {
-            self.cycle = cycle + 1;
+            self.cycle = 1;
             return false;
         }
         let rendering = self.get_show_bg() || self.get_show_sp();
@@ -526,11 +528,18 @@ impl<'a> PPU<'a> {
                     self.reset_cx();
                     self.fetch_sprite();
                 }
-                if pre_line && cycle == 1 {
-                    /* clear vblank, sprite zero hit & overflow */
-                    self.ppustatus &= !(PPU::FLAG_VBLANK |
-                                        PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
-                    self.bg_pixel = 0;
+                if pre_line {
+                    if cycle == 1 {
+                        /* clear vblank, sprite zero hit & overflow */
+                        self.ppustatus &= !(PPU::FLAG_VBLANK |
+                                            PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
+                        self.bg_pixel = 0
+                    } else if cycle == 339 && self.f {
+                        self.scanline = 0;
+                        self.cycle = 0;
+                        self.f = !self.f;
+                        return false;
+                    }
                 }
             }
         } else {
@@ -551,6 +560,7 @@ impl<'a> PPU<'a> {
             self.scanline += 1;
             if self.scanline > 261 {
                 self.scanline = 0;
+                self.f = !self.f;
             }
         }
         false
