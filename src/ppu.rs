@@ -89,7 +89,6 @@ impl<'a> PPU<'a> {
     #[inline]
     pub fn write_oamdata(&mut self, data: u8) {
         self.reg = data;
-        if self.rendering { return }
         unsafe {
             let oam_raw = transmute::<&mut[Sprite; 64], &mut[u8; 256]>(&mut self.oam);
             oam_raw[self.oamaddr as usize] = data;
@@ -109,6 +108,9 @@ impl<'a> PPU<'a> {
     pub fn write_scroll(&mut self, data: u8) {
         self.reg = data;
         let data = data as u16;
+        if !(!(self.get_show_bg() || self.get_show_sp()) || self.get_flag_vblank()) {
+            println!("writing to scroll {} {}", self.scanline, self.cycle);
+        }
         match self.w {
             false => {
                 self.t = (self.t & 0x7fe0) | (data >> 3);
@@ -491,8 +493,7 @@ impl<'a> PPU<'a> {
         }
         let visible_line = self.scanline < 240;
         let pre_line = self.scanline == 261;
-        self.rendering = pre_line || visible_line;
-        if self.rendering && (self.get_show_bg() || self.get_show_sp()) {
+        if (pre_line || visible_line) && (self.get_show_bg() || self.get_show_sp()) {
             if pre_line && 279 < cycle && cycle < 305 {
                 self.reset_y();
             } else {
