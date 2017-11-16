@@ -488,9 +488,10 @@ impl<'a> PPU<'a> {
             self.cycle = cycle + 1;
             return false;
         }
+        let rendering = self.get_show_bg() || self.get_show_sp();
         let visible_line = self.scanline < 240;
         let pre_line = self.scanline == 261;
-        if (pre_line || visible_line) && (self.get_show_bg() || self.get_show_sp()) {
+        if (pre_line || visible_line) && rendering {
             if pre_line && 279 < cycle && cycle < 305 {
                 self.reset_y();
             } else {
@@ -534,14 +535,17 @@ impl<'a> PPU<'a> {
                     self.bg_pixel = 0;
                 }
             }
-        } else if self.scanline == 241 && cycle == 1 {
-            if !self.early_read {
-                self.ppustatus |= PPU::FLAG_VBLANK;
+        } else {
+            if !rendering { self.bg_pixel = 0 }
+            if self.scanline == 241 && cycle == 1 {
+                if !self.early_read {
+                    self.ppustatus |= PPU::FLAG_VBLANK;
+                }
+                self.scr.render();
+                self.cycle += 1;
+                self.early_read = false;
+                return !self.early_read && self.get_flag_nmi(); /* trigger cpu's NMI */
             }
-            self.scr.render();
-            self.cycle += 1;
-            self.early_read = false;
-            return !self.early_read && self.get_flag_nmi(); /* trigger cpu's NMI */
         }
         self.cycle += 1;
         if self.cycle > 340 {
