@@ -447,7 +447,7 @@ impl<'a> PPU<'a> {
         let ppustatus = 0xa0;
         let oamaddr = 0x00;
         let buffered_read = 0x00;
-        let cycle = 370;
+        let cycle = 340;
         let scanline = 240;
         PPU {
             scanline,
@@ -478,7 +478,7 @@ impl<'a> PPU<'a> {
         self.ppustatus = self.ppustatus & 0x80;
         self.w = false;
         self.buffered_read = 0x00;
-        self.cycle = 370;
+        self.cycle = 340;
         self.scanline = 240;
     }
 
@@ -528,18 +528,11 @@ impl<'a> PPU<'a> {
                     self.reset_cx();
                     self.fetch_sprite();
                 }
-                if pre_line {
-                    if cycle == 1 {
-                        /* clear vblank, sprite zero hit & overflow */
-                        self.ppustatus &= !(PPU::FLAG_VBLANK |
-                                            PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
-                        self.bg_pixel = 0
-                    } else if cycle == 339 && self.f {
+                if pre_line && cycle == 339 && self.f {
                         self.scanline = 0;
                         self.cycle = 0;
                         self.f = !self.f;
                         return false;
-                    }
                 }
             }
         } else {
@@ -549,10 +542,16 @@ impl<'a> PPU<'a> {
                     self.ppustatus |= PPU::FLAG_VBLANK;
                 }
                 self.scr.render();
-                self.cycle += 1;
+                self.cycle = 2;
                 self.early_read = false;
                 return !self.early_read && self.get_flag_nmi(); /* trigger cpu's NMI */
             }
+        }
+        if pre_line && cycle == 1 {
+            /* clear vblank, sprite zero hit & overflow */
+            self.ppustatus &= !(PPU::FLAG_VBLANK |
+                                PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
+            self.bg_pixel = 0;
         }
         self.cycle += 1;
         if self.cycle > 340 {

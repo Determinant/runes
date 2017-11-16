@@ -232,6 +232,13 @@ macro_rules! read16 {
                                                 $mem.read($laddr)));
 }
 
+macro_rules! read16wrap {
+    ($mem: expr, $laddr: expr) => ({
+        let naddr = ($laddr & 0xff00) | (($laddr as u8).wrapping_add(1) as u16);
+        make16!($mem.read(naddr), $mem.read($laddr))
+    });
+}
+
 mod ops {
     use memory::VMem;
     use mos6502::*;
@@ -392,13 +399,13 @@ mod ops {
     fn rol(cpu: &mut CPU) {
         let res = match cpu.acc {
                     true => {
-                        let t = (cpu.a as u16) << 1;
-                        cpu.a = t as u8 | cpu.get_carry();
+                        let t = ((cpu.a as u16) << 1) | (cpu.get_carry() as u16);
+                        cpu.a = t as u8;
                         t
                     },
                     false => {
-                        let t = (cpu.mem.read(cpu.ea) as u16) << 1;
-                        cpu.mem.write(cpu.ea, t as u8 | cpu.get_carry());
+                        let t = ((cpu.mem.read(cpu.ea) as u16) << 1) | (cpu.get_carry() as u16);
+                        cpu.mem.write(cpu.ea, t as u8);
                         t
                     }};
         let mut status = cpu.status & !(CARRY_FLAG | ZERO_FLAG | NEG_FLAG);
@@ -413,15 +420,15 @@ mod ops {
         let res = match cpu.acc {
                     true => {
                         let old = cpu.a;
-                        let t = old >> 1;
-                        cpu.a = t as u8 | (cpu.get_carry() << 7);
+                        let t = (old >> 1) | (cpu.get_carry() << 7);
+                        cpu.a = t as u8;
                         status |= (old & 1) as u8; /* carry flag */
                         t
                     },
                     false => {
                         let old = cpu.mem.read(cpu.ea);
-                        let t = old >> 1;
-                        cpu.mem.write(cpu.ea, t as u8 | (cpu.get_carry() << 7));
+                        let t = (old >> 1) | (cpu.get_carry() << 7);
+                        cpu.mem.write(cpu.ea, t as u8);
                         status |= (old & 1) as u8; /* carry flag */
                         t
                     }};
@@ -649,17 +656,17 @@ mod addr {
 
     fn ind(cpu: &mut CPU) -> u8 {
         let addr = read16!(cpu.mem, cpu.opr);
-        cpu.ea = read16!(cpu.mem, addr); 0
+        cpu.ea = read16wrap!(cpu.mem, addr); 0
     }
 
     fn xin(cpu: &mut CPU) -> u8 {
-        cpu.ea = read16!(cpu.mem,
+        cpu.ea = read16wrap!(cpu.mem,
                          cpu.mem.read(cpu.opr)
                                 .wrapping_add(cpu.x) as u16) as u16; 0
     }
 
     fn iny(cpu: &mut CPU) -> u8 {
-        let base = read16!(cpu.mem, cpu.mem.read(cpu.opr) as u16);
+        let base = read16wrap!(cpu.mem, cpu.mem.read(cpu.opr) as u16);
         let sum = (base & 0xff) + (cpu.y as u16);
         cpu.ea = (base & 0xff00).wrapping_add(sum);
         (sum >> 8) as u8 /* boundary cross if carry */
@@ -747,7 +754,7 @@ impl<'a> CPU<'a> {
         } else {
             let pc = self.pc;
             let opcode = self.mem.read(pc) as usize;
-            /*
+            /* 
             let len = INST_LENGTH[opcode];
             let mut code = vec![0; len as usize];
             for i in 0..len as u16 {
@@ -756,7 +763,7 @@ impl<'a> CPU<'a> {
             println!("0x{:04x} {} a:{:02x} x:{:02x} y:{:02x} s: {:02x} sp: {:02x}",
                      pc, disasm::parse(opcode as u8, &code[1..]),
                      self.a, self.x, self.y, self.status, self.sp);
-                     */
+            */         
             /* update opr pointing to operands of current inst */
             self.opr = pc.wrapping_add(1);
             /* update program counter pointing to next inst */
