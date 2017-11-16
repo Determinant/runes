@@ -531,6 +531,7 @@ impl<'a> PPU<'a> {
                     /* clear vblank, sprite zero hit & overflow */
                     self.ppustatus &= !(PPU::FLAG_VBLANK |
                                         PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
+                    self.bg_pixel = 0;
                 }
             }
         } else if self.scanline == 241 && cycle == 1 {

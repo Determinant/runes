@@ -4,12 +4,14 @@ mod mos6502;
 mod ppu;
 mod cartridge;
 mod mapper;
+mod controller;
 
 use std::fs::File;
 use std::io::Read;
 use core::cell::{Cell, RefCell, UnsafeCell};
 use core::intrinsics::transmute;
 use cartridge::*;
+use controller::stdctl::{Joystick, Button};
 use std::time::{Instant, Duration};
 use std::thread::sleep;
 
@@ -21,7 +23,7 @@ use sdl2::pixels::PixelFormatEnum;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 
-const PIXEL_SIZE: u32 = 3;
+const PIXEL_SIZE: u32 = 2;
 const RGB_COLORS: [u32; 64] = [
     0x666666, 0x002a88, 0x1412a7, 0x3b00a4, 0x5c007e, 0x6e0040, 0x6c0600, 0x561d00,
     0x333500, 0x0b4800, 0x005200, 0x004f08, 0x00404d, 0x000000, 0x000000, 0x000000,
@@ -59,17 +61,19 @@ impl ppu::Screen for DummyWindow {
     }
 }
 
-struct SDLWindow {
+struct SDLWindow<'a> {
     canvas: RefCell<sdl2::render::WindowCanvas>,
     events: RefCell<sdl2::EventPump>,
     frame_buffer: UnsafeCell<[u8; FB_SIZE]>,
     texture: UnsafeCell<sdl2::render::Texture>,
     timer: Cell<Instant>,
-    duration_per_frame: Duration
+    duration_per_frame: Duration,
+    p1_button_states: UnsafeCell<[bool; 8]>,
+    p1_ctl: &'a Joystick
 }
 
-impl SDLWindow {
-    fn new() -> Self {
+impl<'a> SDLWindow<'a> {
+    fn new(p1_ctl: &'a Joystick) -> Self {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
         let window = video_subsystem.window("RuNES", WIN_WIDTH, WIN_HEIGHT)
@@ -91,16 +95,60 @@ impl SDLWindow {
             texture: UnsafeCell::new(texture_creator.create_texture_streaming(
                         PixelFormatEnum::RGB24, WIN_WIDTH, WIN_HEIGHT).unwrap()),
             timer: Cell::new(Instant::now()),
-            duration_per_frame: Duration::from_millis(1000 / 60)
+            duration_per_frame: Duration::from_millis(1000 / 60),
+            p1_button_states: UnsafeCell::new([false; 8]),
+            p1_ctl,
         }
     }
 
     #[inline(always)]
     fn poll(&self) -> bool {
+        use Keycode::*;
+        let p1_button_states = unsafe {&mut *self.p1_button_states.get()};
         for event in self.events.borrow_mut().poll_iter() {
             match event {
-                Event::Quit {..} | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                Event::Quit {..} | Event::KeyDown { keycode: Some(Escape), .. } => {
                     return true;
+                },
+                Event::KeyDown { keycode: Some(c), .. } => {
+                    let p = match c {
+                        I => Button::Up,
+                        K => Button::Down,
+                        J => Button::Left,
+                        L => Button::Right,
+                        Z => Button::A,
+                        X => Button::B,
+                        Return => Button::Start,
+                        S => Button::Select,
+                        _ => Button::Null
+                    };
+                    match p {
+                        Button::Null => (),
+                        i => {
+                            p1_button_states[i as usize] = true;
+                            self.p1_ctl.set(p1_button_states);
+                        }
+                    }
+                },
+                Event::KeyUp { keycode: Some(c), .. } => {
+                    let p = match c {
+                        I => Button::Up,
+                        K => Button::Down,
+                        J => Button::Left,
+                        L => Button::Right,
+                        Z => Button::A,
+                        X => Button::B,
+                        Return => Button::Start,
+                        S => Button::Select,
+                        _ => Button::Null
+                    };
+                    match p {
+                        Button::Null => (),
+                        i => {
+                            p1_button_states[i as usize] = false;
+                            self.p1_ctl.set(p1_button_states);
+                        }
+                    }
                 },
                 _ => ()
             }
@@ -115,7 +163,7 @@ fn get_rgb(color: u8) -> (u8, u8, u8) {
     ((c >> 16) as u8, ((c >> 8) & 0xff) as u8, (c & 0xff) as u8)
 }
 
-impl ppu::Screen for SDLWindow {
+impl<'a> ppu::Screen for SDLWindow<'a> {
     fn put(&self, x: u8, y: u8, color: u8) {
         unsafe {
             let (r, g, b) = get_rgb(color);
@@ -228,10 +276,11 @@ fn main() {
     */
     let cart = cartridge::Cartridge::new(chr_rom, prg_rom, sram, mirror);
     //let win = Window {buff: RefCell::new([[0; 256]; 240])};
-    let win = SDLWindow::new();
+    let p1ctl = Joystick::new();
+    let win = SDLWindow::new(&p1ctl);
     let mapper = mapper::Mapper2::new(&cart);
     let mut ppu = ppu::PPU::new(memory::PPUMemory::new(&mapper, &cart), &win);
-    let mut cpu = mos6502::CPU::new(memory::CPUMemory::new(&mut ppu, &mapper));
+    let mut cpu = mos6502::CPU::new(memory::CPUMemory::new(&mut ppu, &mapper, Some(&p1ctl), None));
     let ptr = &mut cpu as *mut mos6502::CPU;
     cpu.mem.init(ptr);
     loop {

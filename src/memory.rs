@@ -2,6 +2,7 @@
 use ppu::PPU;
 use mos6502::CPU;
 use cartridge::{MirrorType, Cartridge};
+use controller::Controller;
 use core::cell::{UnsafeCell, Cell};
 use core::ptr::null_mut;
 
@@ -14,15 +15,20 @@ pub struct CPUMemory<'a> {
     sram: UnsafeCell<[u8; 2048]>,
     ppu: Cell<*mut PPU<'a>>,
     cpu: Cell<*mut CPU<'a>>,
-    mapper: &'a VMem
+    mapper: &'a VMem,
+    ctl1: Option<&'a Controller>,
+    ctl2: Option<&'a Controller>
 }
 
 impl<'a> CPUMemory<'a> {
-    pub fn new(ppu: *mut PPU<'a>, mapper: &'a VMem) -> Self {
+    pub fn new(ppu: *mut PPU<'a>,
+               mapper: &'a VMem,
+               ctl1: Option<&'a Controller>,
+               ctl2: Option<&'a Controller>) -> Self {
         CPUMemory{sram: UnsafeCell::new([0; 2048]),
                   cpu: Cell::new(null_mut()),
                   ppu: Cell::new(ppu),
-                  mapper}
+                  mapper, ctl1, ctl2}
     }
 
     pub fn init(&self, cpu: *mut CPU<'a>) {
@@ -40,6 +46,18 @@ impl<'a> VMem for CPUMemory<'a> {
                 0x2 => ppu.read_status(),
                 0x4 => ppu.read_oamdata(),
                 0x7 => ppu.read_data(),
+                _ => 0
+            }
+        } else if addr < 0x4020 {
+            match addr {
+                0x4016 => match self.ctl1 {
+                    Some(c) => c.read(),
+                    None => 0
+                },
+                0x4017 => match self.ctl2 {
+                    Some(c) => c.read(),
+                    None => 0
+                },
                 _ => 0
             }
         } else if addr < 0x6000 {
@@ -68,6 +86,10 @@ impl<'a> VMem for CPUMemory<'a> {
         } else if addr < 0x4020 {
             match addr {
                 0x4014 => ppu.write_oamdma(data, cpu),
+                0x4016 => match self.ctl1 {
+                    Some(c) => c.write(data),
+                    None => ()
+                },
                 _ => ()
             }
         } else if addr < 0x6000 {
