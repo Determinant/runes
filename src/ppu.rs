@@ -112,7 +112,6 @@ impl<'a> PPU<'a> {
             false => {
                 self.t = (self.t & 0x7fe0) | (data >> 3);
                 self.x = (data & 0x07) as u8;
-                //assert!(self.x == 0);
                 self.w = true;
             },
             true => {
@@ -303,12 +302,12 @@ impl<'a> PPU<'a> {
 
     #[inline(always)]
     fn clear_sprite(&mut self) {
-        assert!(self.scanline != 261);
+        debug_assert!(self.scanline != 261);
         self.oam2 = [0x100; 8];
     }
 
     fn eval_sprite(&mut self) {
-        assert!(self.scanline != 261);
+        debug_assert!(self.scanline != 261);
         /* we use scanline here because s.y is the (actual y) - 1 */
         let mut nidx = 0;
         let mut n = 0;
@@ -369,7 +368,6 @@ impl<'a> PPU<'a> {
                     ((self.ppuctl as u16 & 0x08) << 9, s.tile, y)
                 },
                 _ => {
-                    //assert!(false);
                     let y = if vflip {15 - y0 as u8} else {y0 as u8};
                     ((s.tile as u16 & 1) << 12,
                      (s.tile & !1u8) | (y >> 3),
@@ -426,8 +424,8 @@ impl<'a> PPU<'a> {
                 }
             }
         }
-        assert!(0 < self.cycle && self.cycle < 257);
-        assert!(self.scanline < 240);
+        debug_assert!(0 < self.cycle && self.cycle < 257);
+        debug_assert!(self.scanline < 240);
         self.scr.put((self.cycle - 1) as u8,
                      self.scanline as u8,
                      self.mem.read_palette(if (pri == 0 || bg_pidx == 0) && sp_pidx != 0 {
