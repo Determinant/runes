@@ -1,6 +1,11 @@
 RuNES
 =====
 
+.. image:: https://img.shields.io/crates/v/runes.svg
+   :target: https://github.com/Determinant/runes
+.. image:: https://img.shields.io/crates/l/runes.svg
+   :target: https://github.com/Determinant/runes
+
 As we know, there have been a ton of NES emulator implementations in various
 kinds of languages (mostly C). All of these emulators come with different
 accuracy and portability. RuNES is an attempt to build a reasonably
