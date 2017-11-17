@@ -8,7 +8,7 @@ mod controller;
 
 use std::fs::File;
 use std::io::Read;
-use core::cell::{Cell, RefCell, UnsafeCell};
+use core::cell::RefCell;
 use core::intrinsics::transmute;
 use cartridge::*;
 use controller::stdctl::{Joystick, Button};
@@ -43,15 +43,15 @@ const WIN_WIDTH: u32 = PIX_WIDTH as u32 * PIXEL_SIZE;
 const WIN_HEIGHT: u32 = PIX_HEIGHT as u32 * PIXEL_SIZE;
 
 struct SDLWindow<'a> {
-    canvas: UnsafeCell<sdl2::render::WindowCanvas>,
-    events: UnsafeCell<sdl2::EventPump>,
-    frame_buffer: UnsafeCell<[u8; FB_SIZE]>,
-    texture: UnsafeCell<sdl2::render::Texture>,
-    timer: Cell<Instant>,
+    canvas: sdl2::render::WindowCanvas,
+    events: sdl2::EventPump,
+    frame_buffer: [u8; FB_SIZE],
+    texture: sdl2::render::Texture,
+    timer: Instant,
     duration_per_frame: Duration,
-    p1_button_states: UnsafeCell<[bool; 8]>,
+    p1_button_states: [bool; 8],
     p1_ctl: &'a Joystick,
-    p1_keymap: UnsafeCell<[Button; 256]>,
+    p1_keymap: [Button; 256],
 }
 
 macro_rules! gen_keymap {
@@ -81,41 +81,42 @@ impl<'a> SDLWindow<'a> {
         canvas.set_draw_color(Color::RGB(255, 255, 255));
         canvas.clear();
         canvas.present();
-        let res = SDLWindow {
-            canvas: UnsafeCell::new(canvas),
-            events: UnsafeCell::new(sdl_context.event_pump().unwrap()),
-            frame_buffer: UnsafeCell::new([0; FB_SIZE]),
-            texture: UnsafeCell::new(texture_creator.create_texture_streaming(
-                        PixelFormatEnum::RGB24, WIN_WIDTH, WIN_HEIGHT).unwrap()),
-            timer: Cell::new(Instant::now()),
+        let mut res = SDLWindow {
+            canvas,
+            events: sdl_context.event_pump().unwrap(),
+            frame_buffer: [0; FB_SIZE],
+            texture: texture_creator.create_texture_streaming(
+                        PixelFormatEnum::RGB24, WIN_WIDTH, WIN_HEIGHT).unwrap(),
+            timer: Instant::now(),
             duration_per_frame: Duration::from_millis(1000 / 60),
-            p1_button_states: UnsafeCell::new([false; 8]),
-            p1_ctl, p1_keymap: UnsafeCell::new([Button::Null; 256])
+            p1_button_states: [false; 8],
+            p1_ctl, p1_keymap: [Button::Null; 256]
         };
-        let keymap = unsafe{&mut *res.p1_keymap.get()};
-        gen_keymap!(keymap, [I, Button::Up,
-                             K, Button::Down,
-                             J, Button::Left,
-                             L, Button::Right,
-                             Z, Button::A,
-                             X, Button::B,
-                             Return, Button::Start,
-                             S, Button::Select,
-                             Up, Button::Up,
-                             Down, Button::Down,
-                             Left, Button::Left,
-                             Right, Button::Right
-                             ]);
+        {
+            let keymap = &mut res.p1_keymap;
+            gen_keymap!(keymap, [I, Button::Up,
+                                 K, Button::Down,
+                                 J, Button::Left,
+                                 L, Button::Right,
+                                 Z, Button::A,
+                                 X, Button::B,
+                                 Return, Button::Start,
+                                 S, Button::Select,
+                                 Up, Button::Up,
+                                 Down, Button::Down,
+                                 Left, Button::Left,
+                                 Right, Button::Right
+                                 ]);
+        }
         res
     }
 
     #[inline]
-    fn poll(&self) -> bool {
+    fn poll(&mut self) -> bool {
         use Keycode::*;
-        let p1_button_states = unsafe {&mut *self.p1_button_states.get()};
-        let p1_keymap = unsafe {&mut *self.p1_keymap.get()};
-        let events = unsafe {&mut *self.events.get()};
-        for event in events.poll_iter() {
+        let p1_button_states = &mut self.p1_button_states;
+        let p1_keymap = &self.p1_keymap;
+        for event in self.events.poll_iter() {
             match event {
                 Event::Quit {..} | Event::KeyDown { keycode: Some(Escape), .. } => {
                     return true;
@@ -152,35 +153,30 @@ fn get_rgb(color: u8) -> (u8, u8, u8) {
 }
 
 impl<'a> ppu::Screen for SDLWindow<'a> {
-    fn put(&self, x: u8, y: u8, color: u8) {
-        unsafe {
-            let (r, g, b) = get_rgb(color);
-            let mut base = ((y as u32 * PIXEL_SIZE) as usize * FB_PITCH) +
-                             (x as u32 * 3 * PIXEL_SIZE) as usize;
+    fn put(&mut self, x: u8, y: u8, color: u8) {
+        let (r, g, b) = get_rgb(color);
+        let mut base = ((y as u32 * PIXEL_SIZE) as usize * FB_PITCH) +
+            (x as u32 * 3 * PIXEL_SIZE) as usize;
+        for _ in 0..PIXEL_SIZE {
+            let slice = &mut self.frame_buffer[base..base + 3 * PIXEL_SIZE as usize];
+            let mut j = 0;
             for _ in 0..PIXEL_SIZE {
-                let slice = &mut (*self.frame_buffer.get())[base..base + 3 * PIXEL_SIZE as usize];
-                let mut j = 0;
-                for _ in 0..PIXEL_SIZE {
-                    slice[j] = r;
-                    slice[j + 1] = g;
-                    slice[j + 2] = b;
-                    j += 3;
-                }
-                base += FB_PITCH;
+                slice[j] = r;
+                slice[j + 1] = g;
+                slice[j + 2] = b;
+                j += 3;
             }
+            base += FB_PITCH;
         }
     }
 
-    fn render(&self) {
-        let canvas = unsafe{&mut *self.canvas.get()};
-        let fb = unsafe{&*self.frame_buffer.get()};
-        let texture = unsafe{&mut *self.texture.get()};
-        texture.update(None, fb, FB_PITCH).unwrap();
-        canvas.clear();
-        canvas.copy(&texture, None, Some(Rect::new(0, 0, WIN_WIDTH, WIN_HEIGHT))).unwrap();
-        canvas.present();
+    fn render(&mut self) {
+        self.texture.update(None, &self.frame_buffer, FB_PITCH).unwrap();
+        self.canvas.clear();
+        self.canvas.copy(&self.texture, None, Some(Rect::new(0, 0, WIN_WIDTH, WIN_HEIGHT))).unwrap();
+        self.canvas.present();
         if self.poll() {std::process::exit(0);}
-        let e = self.timer.get().elapsed();
+        let e = self.timer.elapsed();
         if self.duration_per_frame > e {
             let diff = self.duration_per_frame - e;
             sleep(diff);
@@ -188,7 +184,7 @@ impl<'a> ppu::Screen for SDLWindow<'a> {
         } else {
             //println!("{} slower", (e - duration_per_frame).subsec_nanos() as f64 / 1e6);
         }
-        self.timer.set(Instant::now());
+        self.timer = Instant::now();
         //canvas.set_draw_color(Color::RGB(128, 128, 128));
     }
 }
@@ -262,15 +258,15 @@ fn main() {
         }
     }
     */
-    let cart = cartridge::Cartridge::new(chr_rom, prg_rom, sram, mirror);
     let p1ctl = Joystick::new();
-    let win = SDLWindow::new(&p1ctl);
-    let mapper = match mapper_id {
-        0 | 2 => mapper::Mapper2::new(&cart),
+    let mut win = SDLWindow::new(&p1ctl);
+    let mut m = match mapper_id {
+        0 | 2 => mapper::Mapper2::new(cartridge::Cartridge::new(chr_rom, prg_rom, sram, mirror)),
         _ => panic!("unsupported mapper {}", mapper_id)
     };
-
-    let mut ppu = ppu::PPU::new(memory::PPUMemory::new(&mapper, &cart), &win);
+    let mt = m.get_cart().mirror_type;
+    let mapper = RefCell::new(&mut m as &mut memory::VMem);
+    let mut ppu = ppu::PPU::new(memory::PPUMemory::new(&mapper, mt), &mut win);
     let mut cpu = mos6502::CPU::new(memory::CPUMemory::new(&mut ppu, &mapper, Some(&p1ctl), None));
     let ptr = &mut cpu as *mut mos6502::CPU;
     cpu.mem.init(ptr);

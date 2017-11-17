@@ -5,8 +5,8 @@ use core::intrinsics::transmute;
 
 pub trait Screen {
     #[inline(always)]
-    fn put(&self, x: u8, y: u8, color: u8);
-    fn render(&self);
+    fn put(&mut self, x: u8, y: u8, color: u8);
+    fn render(&mut self);
 }
 
 #[repr(C, packed)]
@@ -53,7 +53,7 @@ pub struct PPU<'a> {
     early_read: Option<bool>,
     /* IO */
     mem: PPUMemory<'a>,
-    scr: &'a Screen,
+    scr: &'a mut Screen,
 }
 
 impl<'a> PPU<'a> {
@@ -443,7 +443,7 @@ impl<'a> PPU<'a> {
                      }));
     }
 
-    pub fn new(mem: PPUMemory<'a>, scr: &'a Screen) -> Self {
+    pub fn new(mem: PPUMemory<'a>, scr: &'a mut Screen) -> Self {
         let ppuctl = 0x00;
         let ppumask = 0x00;
         let ppustatus = 0xa0;
