@@ -3,12 +3,12 @@ RuNES
 
 As we know, there have been a ton of NES emulators implementation in various
 kinds of languages (mostly C). All of these emulators come with different
-accuracy and portability. RuNES is an attempt to implement a reasonably
+accuracy and portability. RuNES is an attempt to build a reasonably
 accurate (instruction level accurate), light-weight and efficient emulation
-core library written in Rust. Unlike sprocketnes_ or pinky_, RuNES strives to
+core library using Rust. Unlike sprocketnes_ or pinky_, RuNES strives to
 provide with a clean and minimal core library without standard library (i.e.,
 without Box, Rc, Vectors, etc.) that could be compiled and easily ported to
-embedded environments. Of course, a simple SDL-based GUI is implemented as a
+embedded environments. Of course, a simple SDL-based GUI is also provided as a
 demonstration of use.
 
 Feature
@@ -37,4 +37,5 @@ Build
 =====
 
 ::
+
     cargo build --release
