@@ -21,7 +21,7 @@ pub struct CPUMemory<'a> {
 }
 
 impl<'a> CPUMemory<'a> {
-    pub fn new(ppu: *mut PPU<'a>,
+    pub fn new(ppu: &mut PPU<'a>,
                mapper: &'a VMem,
                ctl1: Option<&'a Controller>,
                ctl2: Option<&'a Controller>) -> Self {
@@ -50,14 +50,8 @@ impl<'a> VMem for CPUMemory<'a> {
             }
         } else if addr < 0x4020 {
             match addr {
-                0x4016 => match self.ctl1 {
-                    Some(c) => c.read(),
-                    None => 0
-                },
-                0x4017 => match self.ctl2 {
-                    Some(c) => c.read(),
-                    None => 0
-                },
+                0x4016 => if let Some(c) = self.ctl1 { c.read() } else { 0 },
+                0x4017 => if let Some(c) = self.ctl2 { c.read() } else { 0 },
                 _ => 0
             }
         } else if addr < 0x6000 {
@@ -86,10 +80,10 @@ impl<'a> VMem for CPUMemory<'a> {
         } else if addr < 0x4020 {
             match addr {
                 0x4014 => ppu.write_oamdma(data, cpu),
-                0x4016 => match self.ctl1 {
-                    Some(c) => c.write(data),
-                    None => ()
-                },
+                0x4016 => {
+                    if let Some(c) = self.ctl1 { c.write(data) }
+                    if let Some(c) = self.ctl2 { c.write(data) }
+                }
                 _ => ()
             }
         } else if addr < 0x6000 {

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 
 pub trait Controller {
     fn read(&self) -> u8;

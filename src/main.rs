@@ -42,25 +42,6 @@ const FB_SIZE: usize = PIX_HEIGHT * FB_PITCH * (PIXEL_SIZE as usize);
 const WIN_WIDTH: u32 = PIX_WIDTH as u32 * PIXEL_SIZE;
 const WIN_HEIGHT: u32 = PIX_HEIGHT as u32 * PIXEL_SIZE;
 
-struct DummyWindow {
-    buff: RefCell<[[u8; PIX_HEIGHT]; PIX_WIDTH]>
-}
-
-impl ppu::Screen for DummyWindow {
-    fn put(&self, x: u8, y: u8, color: u8) {
-        self.buff.borrow_mut()[y as usize][x as usize] = color;
-    }
-    fn render(&self) {
-        println!("a frame has been redrawn:");
-        for r in self.buff.borrow().iter() {
-            for c in r.iter() {
-                print!("{:02x}", c);
-            }
-            println!("");
-        }
-    }
-}
-
 struct SDLWindow<'a> {
     canvas: UnsafeCell<sdl2::render::WindowCanvas>,
     events: UnsafeCell<sdl2::EventPump>,
@@ -282,14 +263,18 @@ fn main() {
     }
     */
     let cart = cartridge::Cartridge::new(chr_rom, prg_rom, sram, mirror);
-    //let win = Window {buff: RefCell::new([[0; 256]; 240])};
     let p1ctl = Joystick::new();
     let win = SDLWindow::new(&p1ctl);
-    let mapper = mapper::Mapper2::new(&cart);
+    let mapper = match mapper_id {
+        0 | 2 => mapper::Mapper2::new(&cart),
+        _ => panic!("unsupported mapper {}", mapper_id)
+    };
+
     let mut ppu = ppu::PPU::new(memory::PPUMemory::new(&mapper, &cart), &win);
     let mut cpu = mos6502::CPU::new(memory::CPUMemory::new(&mut ppu, &mapper, Some(&p1ctl), None));
     let ptr = &mut cpu as *mut mos6502::CPU;
     cpu.mem.init(ptr);
+
     loop {
         cpu.step();
         while cpu.cycle > 0 {
