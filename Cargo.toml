@@ -2,7 +2,16 @@
 name = "runes"
 version = "0.1.0"
 authors = ["Determinant <tederminant@gmail.com>"]
+description = "A no-std NES emulator library written purely in Rust."
 
-[dependencies.sdl2]
+[dev-dependencies.sdl2]
 version = "0.31"
 features = ["unsafe_textures"]
+
+[lib]
+name = "runes"
+path = "src/lib.rs"
+
+[[example]]
+name = "runes"
+path = "src/bin.rs"

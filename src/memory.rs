@@ -115,17 +115,6 @@ impl<'a> PPUMemory<'a> {
             mirror_type,
             mapper}
     }
-
-    pub fn dump(&self) {
-        for (i, v) in self.palette.iter().enumerate() {
-            print!("{:02x} ", *v);
-            if (i & 0x7) == 0x7 {println!("@{:02x}", i)}
-        }
-        for (i, v) in self.nametable.iter().enumerate() {
-            print!("{:02x} ", *v);
-            if (i & 0x1f) == 0x1f {println!("@{:02x}", i)}
-        }
-    }
 }
 
 const MIRROR_IDX: [[u8; 4]; 5] = [

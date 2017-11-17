@@ -3,8 +3,8 @@ extern crate core;
 use memory::VMem;
 use cartridge::{Cartridge, BankType};
 
-pub struct Mapper2<'a> {
-    cart: Cartridge,
+pub struct Mapper2<'a, C> where C: Cartridge {
+    cart: C,
     prg_bank1: &'a [u8],
     prg_bank2: &'a [u8],
     chr_bank: &'a mut [u8],
@@ -12,7 +12,7 @@ pub struct Mapper2<'a> {
     prg_nbank: usize
 }
 
-impl<'a> VMem for Mapper2<'a> {
+impl<'a, C> VMem for Mapper2<'a, C> where C: Cartridge {
     fn read(&self, addr: u16) -> u8 {
         let addr = addr as usize;
         if addr < 0x2000 {         /* 0x2000 size bank */
@@ -46,8 +46,8 @@ impl<'a> VMem for Mapper2<'a> {
     }
 }
 
-impl<'a> Mapper2<'a> {
-    pub fn new(cart: Cartridge) -> Self {
+impl<'a, C> Mapper2<'a, C> where C: Cartridge {
+    pub fn new(cart: C) -> Self {
         unsafe {
             let nbank = cart.get_size(BankType::PrgRom) >> 14;
             let null = core::mem::uninitialized();

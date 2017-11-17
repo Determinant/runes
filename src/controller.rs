@@ -8,18 +8,16 @@ pub trait Controller {
 pub mod stdctl {
     use core::cell::Cell;
     use controller::Controller;
-    #[derive(Copy, Clone)]
-    pub enum Button {
-        A = 0,
-        B = 1,
-        Select = 2,
-        Start = 3,
-        Up = 4,
-        Down = 5,
-        Left = 6,
-        Right = 7,
-        Null = 8,
-    }
+    pub const A: u8 = 1 << 0;
+    pub const B: u8 = 1 << 1;
+    pub const SELECT: u8 = 1 << 2;
+    pub const START: u8 = 1 << 3;
+    pub const UP: u8 = 1 << 4;
+    pub const DOWN: u8 = 1 << 5;
+    pub const LEFT: u8 = 1 << 6;
+    pub const RIGHT: u8 = 1 << 7;
+    pub const NULL: u8 = 0;
+    
     pub struct Joystick {
         strobe: Cell<bool>,
         reg: Cell<u8>,
@@ -31,15 +29,9 @@ pub mod stdctl {
             Joystick{reg: Cell::new(0), strobe: Cell::new(false), back_reg: Cell::new(0)}
         }
 
-        pub fn set(&self, buttons: &[bool]) {
-            let mut reg = 0;
-            for (i, v) in buttons.iter().enumerate() {
-                if *v {
-                    reg |= 1 << i;
-                }
-            }
-            self.reg.set(reg);
-            self.back_reg.set(reg);
+        pub fn set(&self, buttons: u8) {
+            self.reg.set(buttons);
+            self.back_reg.set(buttons);
         }
     }
 

@@ -1,7 +1,7 @@
 RuNES
 =====
 
-As we know, there have been a ton of NES emulators implementation in various
+As we know, there have been a ton of NES emulator implementations in various
 kinds of languages (mostly C). All of these emulators come with different
 accuracy and portability. RuNES is an attempt to build a reasonably
 accurate (instruction level accurate), light-weight and efficient emulation
@@ -38,4 +38,5 @@ Build
 
 ::
 
-    cargo build --release
+    cargo build --release               # build the library only (no std dep)
+    cargo build --examples --release    # or build the example emulator (requires std)

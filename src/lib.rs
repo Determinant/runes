@@ -1,4 +1,4 @@
-extern crate core;
+#![no_std]
 mod memory;
 mod mos6502;
 mod ppu;

@@ -11,7 +11,7 @@ use std::io::Read;
 use core::cell::RefCell;
 use core::intrinsics::transmute;
 use cartridge::*;
-use controller::stdctl::{Joystick, Button};
+use controller::stdctl;
 use std::time::{Instant, Duration};
 use std::thread::sleep;
 
@@ -42,6 +42,40 @@ const FB_SIZE: usize = PIX_HEIGHT * FB_PITCH * (PIXEL_SIZE as usize);
 const WIN_WIDTH: u32 = PIX_WIDTH as u32 * PIXEL_SIZE;
 const WIN_HEIGHT: u32 = PIX_HEIGHT as u32 * PIXEL_SIZE;
 
+pub struct SimpleCart {
+    chr_rom: Vec<u8>,
+    prg_rom: Vec<u8>,
+    sram: Vec<u8>,
+    pub mirror_type: MirrorType
+}
+
+impl SimpleCart {
+    pub fn new(chr_rom: Vec<u8>,
+               prg_rom: Vec<u8>,
+               sram: Vec<u8>,
+               mirror_type: MirrorType) -> Self {
+        SimpleCart{chr_rom, prg_rom, sram, mirror_type}
+    }
+}
+
+impl Cartridge for SimpleCart {
+    fn get_size(&self, kind: BankType) -> usize {
+        match kind {
+            BankType::PrgRom => self.prg_rom.len(),
+            BankType::ChrRom => self.chr_rom.len(),
+            BankType::Sram => self.sram.len()
+        }
+    }
+    fn get_bank(&mut self, base: usize, size: usize, kind: BankType) -> *mut [u8] {
+        &mut (match kind {
+            BankType::PrgRom => &mut self.prg_rom,
+            BankType::ChrRom => &mut self.chr_rom,
+            BankType::Sram => &mut self.sram,
+        })[base..base + size]
+    }
+    fn get_mirror_type(&self) -> MirrorType {self.mirror_type}
+}
+
 struct SDLWindow<'a> {
     canvas: sdl2::render::WindowCanvas,
     events: sdl2::EventPump,
@@ -49,9 +83,9 @@ struct SDLWindow<'a> {
     texture: sdl2::render::Texture,
     timer: Instant,
     duration_per_frame: Duration,
-    p1_button_states: [bool; 8],
-    p1_ctl: &'a Joystick,
-    p1_keymap: [Button; 256],
+    p1_button_state: u8,
+    p1_ctl: &'a stdctl::Joystick,
+    p1_keymap: [u8; 256],
 }
 
 macro_rules! gen_keymap {
@@ -65,7 +99,7 @@ macro_rules! gen_keymap {
 }
 
 impl<'a> SDLWindow<'a> {
-    fn new(p1_ctl: &'a Joystick) -> Self {
+    fn new(p1_ctl: &'a stdctl::Joystick) -> Self {
         use Keycode::*;
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
@@ -89,23 +123,23 @@ impl<'a> SDLWindow<'a> {
                         PixelFormatEnum::RGB24, WIN_WIDTH, WIN_HEIGHT).unwrap(),
             timer: Instant::now(),
             duration_per_frame: Duration::from_millis(1000 / 60),
-            p1_button_states: [false; 8],
-            p1_ctl, p1_keymap: [Button::Null; 256]
+            p1_button_state: 0,
+            p1_ctl, p1_keymap: [stdctl::NULL; 256]
         };
         {
             let keymap = &mut res.p1_keymap;
-            gen_keymap!(keymap, [I, Button::Up,
-                                 K, Button::Down,
-                                 J, Button::Left,
-                                 L, Button::Right,
-                                 Z, Button::A,
-                                 X, Button::B,
-                                 Return, Button::Start,
-                                 S, Button::Select,
-                                 Up, Button::Up,
-                                 Down, Button::Down,
-                                 Left, Button::Left,
-                                 Right, Button::Right
+            gen_keymap!(keymap, [I, stdctl::UP,
+                                 K, stdctl::DOWN,
+                                 J, stdctl::LEFT,
+                                 L, stdctl::RIGHT,
+                                 Z, stdctl::A,
+                                 X, stdctl::B,
+                                 Return, stdctl::START,
+                                 S, stdctl::SELECT,
+                                 Up, stdctl::UP,
+                                 Down, stdctl::DOWN,
+                                 Left, stdctl::LEFT,
+                                 Right, stdctl::RIGHT
                                  ]);
         }
         res
@@ -114,7 +148,6 @@ impl<'a> SDLWindow<'a> {
     #[inline]
     fn poll(&mut self) -> bool {
         use Keycode::*;
-        let p1_button_states = &mut self.p1_button_states;
         let p1_keymap = &self.p1_keymap;
         for event in self.events.poll_iter() {
             match event {
@@ -122,22 +155,12 @@ impl<'a> SDLWindow<'a> {
                     return true;
                 },
                 Event::KeyDown { keycode: Some(c), .. } => {
-                    match p1_keymap[(c as usize) & 0xff] {
-                        Button::Null => (),
-                        i => {
-                            p1_button_states[i as usize] = true;
-                            self.p1_ctl.set(p1_button_states);
-                        }
-                    }
+                    self.p1_button_state |= p1_keymap[(c as usize) & 0xff];
+                    self.p1_ctl.set(self.p1_button_state)
                 },
                 Event::KeyUp { keycode: Some(c), .. } => {
-                    match p1_keymap[(c as usize) & 0xff] {
-                        Button::Null => (),
-                        i => {
-                            p1_button_states[i as usize] = false;
-                            self.p1_ctl.set(p1_button_states);
-                        }
-                    }
+                    self.p1_button_state &= !p1_keymap[(c as usize) & 0xff];
+                    self.p1_ctl.set(self.p1_button_state)
                 },
                 _ => ()
             }
@@ -258,13 +281,13 @@ fn main() {
         }
     }
     */
-    let p1ctl = Joystick::new();
+    let p1ctl = stdctl::Joystick::new();
     let mut win = SDLWindow::new(&p1ctl);
     let mut m = match mapper_id {
-        0 | 2 => mapper::Mapper2::new(cartridge::Cartridge::new(chr_rom, prg_rom, sram, mirror)),
+        0 | 2 => mapper::Mapper2::new(SimpleCart::new(chr_rom, prg_rom, sram, mirror)),
         _ => panic!("unsupported mapper {}", mapper_id)
     };
-    let mt = m.get_cart().mirror_type;
+    let mt = m.get_cart().get_mirror_type();
     let mapper = RefCell::new(&mut m as &mut memory::VMem);
     let mut ppu = ppu::PPU::new(memory::PPUMemory::new(&mapper, mt), &mut win);
     let mut cpu = mos6502::CPU::new(memory::CPUMemory::new(&mut ppu, &mapper, Some(&p1ctl), None));
