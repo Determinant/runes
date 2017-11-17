@@ -274,13 +274,11 @@ fn main() {
     let mut cpu = mos6502::CPU::new(memory::CPUMemory::new(&mut ppu, &mapper, Some(&p1ctl), None));
     let ptr = &mut cpu as *mut mos6502::CPU;
     cpu.mem.init(ptr);
-
     loop {
         cpu.step();
         while cpu.cycle > 0 {
-
             if ppu.tick() || ppu.tick() || ppu.tick() {
-                cpu.trigger_nmi();
+                cpu.trigger_delayed_nmi()
             }
             cpu.cycle -= 1;
         }

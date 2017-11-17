@@ -19,7 +19,7 @@ struct Sprite {
 }
 
 pub struct PPU<'a> {
-    scanline: u16,
+    pub scanline: u16,
     /* registers */
     ppuctl: u8,
     ppumask: u8,
@@ -33,7 +33,7 @@ pub struct PPU<'a> {
     t: u16, /* temporary vram addr */
     w: bool, /* first/second write toggle */
     f: bool, /* if it is an odd frame */
-    cycle: u16, /* cycle in the current scanline */
+    pub cycle: u16, /* cycle in the current scanline */
     /* rendering regs & latches */
         /* background register (current two tiles) */
     bg_pixel: u64,
@@ -48,9 +48,9 @@ pub struct PPU<'a> {
     sp_pixel: [u32; 8],
     sp_idx: [usize; 8],
     sp_cnt: [u8; 8],
-    rendering: bool,
+    pub vblank: bool,
     buffered_read: u8,
-    early_read: bool,
+    early_read: Option<bool>,
     /* IO */
     mem: PPUMemory<'a>,
     scr: &'a Screen,
@@ -75,8 +75,12 @@ impl<'a> PPU<'a> {
         let res = (self.ppustatus & !0x1fu8) | (self.reg & 0x1f);
         self.ppustatus &= !PPU::FLAG_VBLANK;
         self.w = false;
-        if self.scanline == 241 && self.cycle == 0 {
-            self.early_read = true;
+        if self.scanline == 241 {
+            match self.cycle {
+                1 => self.early_read = Some(true), /* read before cycle 1 */
+                2 | 3 => self.early_read = Some(false), /* read on cycle 1 and 2 */
+                _ => ()
+            }
         }
         res
     }
@@ -185,7 +189,7 @@ impl<'a> PPU<'a> {
     }
 
     #[inline(always)] fn get_spritesize(&self) -> u8 {(self.ppuctl >> 5) & 1}
-    #[inline(always)] fn get_flag_nmi(&self) -> bool { (self.ppuctl >> 7) == 1 }
+    #[inline(always)] pub fn get_flag_nmi(&self) -> bool { (self.ppuctl >> 7) == 1 }
     #[inline(always)] fn get_vram_inc(&self) -> u8 { (self.ppuctl >> 2) & 1}
     #[inline(always)] fn get_show_leftmost_bg(&self) -> bool { (self.ppumask >> 1) & 1 == 1}
     #[inline(always)] fn get_show_leftmost_sp(&self) -> bool { (self.ppumask >> 2) & 1 == 1}
@@ -445,8 +449,8 @@ impl<'a> PPU<'a> {
         let ppustatus = 0xa0;
         let oamaddr = 0x00;
         let buffered_read = 0x00;
-        let cycle = 340;
-        let scanline = 240;
+        let cycle = 0;
+        let scanline = 261;
         PPU {
             scanline,
             ppuctl,
@@ -463,9 +467,9 @@ impl<'a> PPU<'a> {
             sp_idx: [0x100; 8],
             sp_pixel: [0; 8],
             sp_cnt: [0; 8],
-            rendering: false,
+            vblank: false,
             buffered_read,
-            early_read: false,
+            early_read: None,
             mem, scr
         }
     }
@@ -478,6 +482,11 @@ impl<'a> PPU<'a> {
         self.buffered_read = 0x00;
         self.cycle = 340;
         self.scanline = 240;
+    }
+
+    #[inline(always)]
+    pub fn try_nmi(&mut self) -> bool {
+        self.get_flag_vblank() && self.get_flag_nmi()
     }
 
     pub fn tick(&mut self) -> bool {
@@ -525,6 +534,8 @@ impl<'a> PPU<'a> {
                      * scanline */
                     self.reset_cx();
                     self.fetch_sprite();
+                    self.cycle = 258;
+                    return false
                 }
                 if pre_line && cycle == 339 && self.f {
                         self.scanline = 0;
@@ -535,21 +546,36 @@ impl<'a> PPU<'a> {
             }
         } else {
             if !rendering { self.bg_pixel = 0 }
-            if self.scanline == 241 && cycle == 1 {
-                if !self.early_read {
-                    self.ppustatus |= PPU::FLAG_VBLANK;
+            if self.scanline == 241 {
+                match cycle {
+                    1 => {
+                        match self.early_read {
+                            Some(true) => (),
+                            _ => self.ppustatus |= PPU::FLAG_VBLANK
+                        }
+                        self.vblank = true;
+                        self.scr.render();
+                        self.cycle = 2;
+                        return false
+                    },
+                    3 => {
+                        let b = self.early_read.is_none();
+                        self.early_read = None;
+                        self.cycle = 4;
+                        return b && self.try_nmi()
+                    },
+                    _ => ()
                 }
-                self.scr.render();
-                self.cycle = 2;
-                self.early_read = false;
-                return !self.early_read && self.get_flag_nmi(); /* trigger cpu's NMI */
             }
         }
         if pre_line && cycle == 1 {
             /* clear vblank, sprite zero hit & overflow */
+            self.vblank = false;
             self.ppustatus &= !(PPU::FLAG_VBLANK |
                                 PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
             self.bg_pixel = 0;
+            self.cycle = 2;
+            return false
         }
         self.cycle += 1;
         if self.cycle > 340 {

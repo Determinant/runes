@@ -677,7 +677,8 @@ mod addr {
 
 enum IntType {
     NMI,
-    IRQ
+    IRQ,
+    DelayedNMI
 }
 
 pub struct CPU<'a> {
@@ -746,35 +747,34 @@ impl<'a> CPU<'a> {
         //let cycle0 = self.cycle;
         if self.int.is_some() {
             match self.int {
-                Some(IntType::NMI) => self.nmi(),
-                Some(IntType::IRQ) => self.irq(),
+                Some(IntType::NMI) => {self.nmi(); self.int = None; return},
+                Some(IntType::IRQ) => {self.irq(); self.int = None; return},
+                Some(IntType::DelayedNMI) => self.trigger_nmi(),
                 _ => ()
             }
-            self.int = None;
-        } else {
-            let pc = self.pc;
-            let opcode = self.mem.read(pc) as usize;
-            /* 
-            let len = INST_LENGTH[opcode];
-            let mut code = vec![0; len as usize];
-            for i in 0..len as u16 {
-                code[i as usize] = self.mem.read(pc + i);
-            }
-            println!("0x{:04x} {} a:{:02x} x:{:02x} y:{:02x} s: {:02x} sp: {:02x}",
-                     pc, disasm::parse(opcode as u8, &code[1..]),
-                     self.a, self.x, self.y, self.status, self.sp);
-            */         
-            /* update opr pointing to operands of current inst */
-            self.opr = pc.wrapping_add(1);
-            /* update program counter pointing to next inst */
-            self.pc = pc.wrapping_add(INST_LENGTH[opcode] as u16);
-            /* get effective address based on addressing mode */
-            self.acc = false;
-            let e = addr::ADDR_MODES[opcode](self) * INST_EXTRA_CYCLE[opcode];
-            /* execute the inst */
-            ops::OPS[opcode](self);
-            self.cycle += (INST_CYCLE[opcode] + e) as u32;
         }
+        let pc = self.pc;
+        let opcode = self.mem.read(pc) as usize;
+        /*
+        let len = INST_LENGTH[opcode];
+        let mut code = vec![0; len as usize];
+        for i in 0..len as u16 {
+            code[i as usize] = self.mem.read(pc + i);
+        }
+        println!("0x{:04x} {} a:{:02x} x:{:02x} y:{:02x} s: {:02x} sp: {:02x}",
+                 pc, disasm::parse(opcode as u8, &code[1..]),
+                 self.a, self.x, self.y, self.status, self.sp);
+        */
+        /* update opr pointing to operands of current inst */
+        self.opr = pc.wrapping_add(1);
+        /* update program counter pointing to next inst */
+        self.pc = pc.wrapping_add(INST_LENGTH[opcode] as u16);
+        /* get effective address based on addressing mode */
+        self.acc = false;
+        let e = addr::ADDR_MODES[opcode](self) * INST_EXTRA_CYCLE[opcode];
+        /* execute the inst */
+        ops::OPS[opcode](self);
+        self.cycle += (INST_CYCLE[opcode] + e) as u32;
         //(self.cycle - cycle0) as u8
     }
 
@@ -792,6 +792,11 @@ impl<'a> CPU<'a> {
     #[inline(always)]
     pub fn trigger_nmi(&mut self) {
         self.int = Some(IntType::NMI);
+    }
+
+    #[inline(always)]
+    pub fn trigger_delayed_nmi(&mut self) {
+        self.int = Some(IntType::DelayedNMI);
     }
 
     #[inline(always)]

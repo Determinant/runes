@@ -68,7 +68,13 @@ impl<'a> VMem for CPUMemory<'a> {
             unsafe{(*self.sram.get())[(addr & 0x07ff) as usize] = data;}
         } else if addr < 0x4000 {
             match addr & 0x7 {
-                0x0 => ppu.write_ctl(data),
+                0x0 => {
+                    let old = ppu.get_flag_nmi();
+                    ppu.write_ctl(data);
+                    if !old && ppu.try_nmi() && ppu.vblank {
+                        cpu.trigger_delayed_nmi()
+                    } /* toggle NMI flag can generate multiple ints */
+                },
                 0x1 => ppu.write_mask(data),
                 0x3 => ppu.write_oamaddr(data),
                 0x4 => ppu.write_oamdata(data),
