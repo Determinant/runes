@@ -184,17 +184,21 @@ fn get_rgb(color: u8) -> (u8, u8, u8) {
 impl<'a> ppu::Screen for SDLWindow<'a> {
     fn put(&mut self, x: u8, y: u8, color: u8) {
         let (r, g, b) = get_rgb(color);
+        let mut pattern = [0; 3 * PIXEL_SIZE as usize];
         let mut base = ((y as u32 * PIXEL_SIZE) as usize * FB_PITCH) +
             (x as u32 * 3 * PIXEL_SIZE) as usize;
-        for _ in 0..PIXEL_SIZE {
-            let slice = &mut self.frame_buffer[base..base + 3 * PIXEL_SIZE as usize];
-            let mut j = 0;
+        {
+            let mut i = 0;
             for _ in 0..PIXEL_SIZE {
-                slice[j] = r;
-                slice[j + 1] = g;
-                slice[j + 2] = b;
-                j += 3;
+                pattern[i] = r;
+                pattern[i + 1] = g;
+                pattern[i + 2] = b;
+                i += 3;
             }
+        }
+        for _ in 0..PIXEL_SIZE {
+            self.frame_buffer[base..base + 3 * PIXEL_SIZE as usize]
+                .copy_from_slice(&pattern[..]);
             base += FB_PITCH;
         }
     }
@@ -202,7 +206,8 @@ impl<'a> ppu::Screen for SDLWindow<'a> {
     fn render(&mut self) {
         self.texture.update(None, &self.frame_buffer, FB_PITCH).unwrap();
         self.canvas.clear();
-        self.canvas.copy(&self.texture, None, Some(Rect::new(0, 0, WIN_WIDTH, WIN_HEIGHT))).unwrap();
+        self.canvas.copy(&self.texture, None,
+                         Some(Rect::new(0, 0, WIN_WIDTH, WIN_HEIGHT))).unwrap();
         self.canvas.present();
         if self.poll() {std::process::exit(0);}
         let e = self.timer.elapsed();
