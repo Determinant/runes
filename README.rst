@@ -9,7 +9,7 @@ RuNES
 As we know, there have been a ton of NES emulator implementations in various
 kinds of languages (mostly C). All of these emulators come with different
 accuracy and portability. RuNES is an attempt to build a reasonably
-accurate (instruction level accurate), light-weight and efficient emulation
+accurate (cycle-level accurate), light-weight and efficient emulation
 core library using Rust. Unlike sprocketnes_ or pinky_, RuNES strives to
 provide with a clean and minimal core library without standard library (i.e.,
 without Box, Rc, Vectors, etc.) that could be compiled and easily ported to
@@ -23,7 +23,7 @@ Feature
 - Support standard 6502 instruction set (unofficial instruction will be
   considered in the future).
 
-- Instruction-level accuracy with accurate CPU/PPU timing.
+- Cycle-level accuracy.
 
 Guidelines
 ==========
