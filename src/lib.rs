@@ -1,6 +1,6 @@
 #![no_std]
 mod memory;
-mod mos6502;
+#[macro_use] mod mos6502;
 mod ppu;
 mod cartridge;
 mod mapper;

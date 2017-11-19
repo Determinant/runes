@@ -50,7 +50,7 @@ pub struct PPU<'a> {
     sp_cnt: [u8; 8],
     pub vblank: bool,
     buffered_read: u8,
-    early_read: Option<bool>,
+    early_read: bool,
     /* IO */
     mem: PPUMemory<'a>,
     scr: &'a mut Screen,
@@ -71,14 +71,14 @@ impl<'a> PPU<'a> {
     }
 
     #[inline]
-    pub fn read_status(&mut self) -> u8 {
+    pub fn read_status(&mut self, cpu: &mut CPU) -> u8 {
         let res = (self.ppustatus & !0x1fu8) | (self.reg & 0x1f);
         self.ppustatus &= !PPU::FLAG_VBLANK;
         self.w = false;
         if self.scanline == 241 {
             match self.cycle {
-                1 => self.early_read = Some(true), /* read before cycle 1 */
-                2 | 3 => self.early_read = Some(false), /* read on cycle 1 and 2 */
+                1 => self.early_read = true, /* read before cycle 1 */
+                2 | 3 => cpu.suppress_nmi(),
                 _ => ()
             }
         }
@@ -175,6 +175,9 @@ impl<'a> PPU<'a> {
     pub fn write_oamdma(&mut self, data: u8, cpu: &mut CPU) {
         self.reg = data;
         let mut addr = (data as u16) << 8;
+        cpu.cycle += 1;
+        cpu.cycle += cpu.cycle & 1;
+        cpu.cycle += 512;
         unsafe {
             let oam_raw = transmute::<&mut[Sprite; 64], &mut[u8; 256]>(&mut self.oam);
             for _ in 0..0x100 {
@@ -183,9 +186,6 @@ impl<'a> PPU<'a> {
                 self.oamaddr = self.oamaddr.wrapping_add(1);
             }
         }
-        cpu.cycle += 1;
-        cpu.cycle += cpu.cycle & 1;
-        cpu.cycle += 512;
     }
 
     #[inline(always)] fn get_spritesize(&self) -> u8 {(self.ppuctl >> 5) & 1}
@@ -449,8 +449,8 @@ impl<'a> PPU<'a> {
         let ppustatus = 0xa0;
         let oamaddr = 0x00;
         let buffered_read = 0x00;
-        let cycle = 0;
-        let scanline = 261;
+        let cycle = 340;
+        let scanline = 240;
         PPU {
             scanline,
             ppuctl,
@@ -469,7 +469,7 @@ impl<'a> PPU<'a> {
             sp_cnt: [0; 8],
             vblank: false,
             buffered_read,
-            early_read: None,
+            early_read: false,
             mem, scr
         }
     }
@@ -546,26 +546,15 @@ impl<'a> PPU<'a> {
             }
         } else {
             if !rendering { self.bg_pixel = 0 }
-            if self.scanline == 241 {
-                match cycle {
-                    1 => {
-                        match self.early_read {
-                            Some(true) => (),
-                            _ => self.ppustatus |= PPU::FLAG_VBLANK
-                        }
-                        self.vblank = true;
-                        self.scr.render();
-                        self.cycle = 2;
-                        return false
-                    },
-                    3 => {
-                        let b = self.early_read.is_none();
-                        self.early_read = None;
-                        self.cycle = 4;
-                        return b && self.try_nmi()
-                    },
-                    _ => ()
+            if self.scanline == 241 && self.cycle == 1 {
+                if !self.early_read {
+                    self.ppustatus |= PPU::FLAG_VBLANK
                 }
+                self.early_read = false;
+                self.vblank = true;
+                self.scr.render();
+                self.cycle = 2;
+                return self.try_nmi()
             }
         }
         if pre_line && cycle == 1 {

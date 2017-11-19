@@ -1,4 +1,4 @@
-use mos6502::{make_optable, make_addrtable};
+#![allow(dead_code)]
 
 mod disops {
     make_optable!(OPS, &str);

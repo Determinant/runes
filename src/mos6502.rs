@@ -3,6 +3,8 @@
 
 use memory::{CPUMemory, VMem};
 pub const CPU_FREQ: u32 = 1789773;
+
+#[macro_export]
 macro_rules! make_optable {
     ($x:ident, $t: ty) => (pub const $x: [$t; 0x100] = [
     /*  0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf */
@@ -25,6 +27,7 @@ macro_rules! make_optable {
     ];);
 }
 
+#[macro_export]
 macro_rules! make_addrtable {
     ($x:ident, $t: ty) => (pub const $x: [$t; 0x100] = [
         nil, xin, nil, xin, zpg, zpg, zpg, zpg, nil, imm, acc, imm, abs, abs, abs, abs,
@@ -564,13 +567,13 @@ mod addr {
     }
 
     fn xin(cpu: &mut CPU) -> u8 {
-        cpu.ea = read16wrap!(cpu.mem,
-                         cpu.mem.read(cpu.opr)
-                                .wrapping_add(cpu.x) as u16) as u16; 0
+        let addr = cpu.mem.read(cpu.opr).wrapping_add(cpu.x) as u16;
+        cpu.ea = read16wrap!(cpu.mem, addr) as u16; 0
     }
 
     fn iny(cpu: &mut CPU) -> u8 {
-        let base = read16wrap!(cpu.mem, cpu.mem.read(cpu.opr) as u16);
+        let addr = cpu.mem.read(cpu.opr) as u16;
+        let base = read16wrap!(cpu.mem, addr);
         let sum = (base & 0xff) + (cpu.y as u16);
         cpu.ea = (base & 0xff00).wrapping_add(sum);
         (sum >> 8) as u8 /* boundary cross if carry */
@@ -609,13 +612,13 @@ macro_rules! make_int {
     fn $f(&mut self) {
         let pc = self.pc;
         let sp = self.sp;
+        self.cycle += 7;
         self.mem.write(stack_addr!(sp, 0), (pc >> 8) as u8);
         self.mem.write(stack_addr!(sp, 1), pc as u8);
         self.mem.write(stack_addr!(sp, 2), self.status);
         self.sp = sp.wrapping_sub(3);
         self.pc = read16!(self.mem, $v as u16);
         self.status |= INT_FLAG;
-        self.cycle += 7;
     });
 }
 
@@ -627,7 +630,7 @@ impl<'a> CPU<'a> {
     #[inline(always)] pub fn get_neg(&self) -> u8 { (self.status >> 7) & 1 }
 
     pub fn new(mem: CPUMemory<'a>) -> Self {
-        let pc = read16!(mem, RESET_VECTOR as u16);
+        let pc = 0;
         /* nes power up state */
         let a = 0;
         let x = 0;
@@ -644,6 +647,11 @@ impl<'a> CPU<'a> {
             mem}
     }
 
+    pub fn start(&mut self) {
+        self.cycle = 2;
+        self.pc = read16!(self.mem, RESET_VECTOR as u16);
+    }
+
     make_int!(nmi, NMI_VECTOR);
     make_int!(irq, IRQ_VECTOR);
 
@@ -657,9 +665,11 @@ impl<'a> CPU<'a> {
                 _ => ()
             }
         }
+        self.cycle += 1;
         let pc = self.pc;
         let opcode = self.mem.read(pc) as usize;
         /*
+        use disasm;
         let len = INST_LENGTH[opcode];
         let mut code = vec![0; len as usize];
         for i in 0..len as u16 {
@@ -675,10 +685,10 @@ impl<'a> CPU<'a> {
         self.pc = pc.wrapping_add(INST_LENGTH[opcode] as u16);
         /* get effective address based on addressing mode */
         self.acc = false;
-        let e = addr::ADDR_MODES[opcode](self) * INST_EXTRA_CYCLE[opcode];
+        self.cycle += INST_CYCLE[opcode] as u32 - 1;
+        self.cycle += (addr::ADDR_MODES[opcode](self) * INST_EXTRA_CYCLE[opcode]) as u32;
         /* execute the inst */
         ops::OPS[opcode](self);
-        self.cycle += (INST_CYCLE[opcode] + e) as u32;
         //(self.cycle - cycle0) as u8
     }
 
@@ -696,6 +706,11 @@ impl<'a> CPU<'a> {
     #[inline(always)]
     pub fn trigger_nmi(&mut self) {
         self.int = Some(IntType::NMI);
+    }
+
+    #[inline(always)]
+    pub fn suppress_nmi(&mut self) {
+        self.int = None;
     }
 
     #[inline(always)]

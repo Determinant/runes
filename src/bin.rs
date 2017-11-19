@@ -1,17 +1,9 @@
 extern crate core;
-mod memory;
-mod mos6502;
-mod ppu;
-mod cartridge;
-mod mapper;
-mod controller;
 
 use std::fs::File;
 use std::io::Read;
 use core::cell::RefCell;
 use core::intrinsics::transmute;
-use cartridge::*;
-use controller::stdctl;
 use std::time::{Instant, Duration};
 use std::thread::sleep;
 
@@ -22,6 +14,20 @@ use sdl2::rect::Rect;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+
+mod memory;
+#[macro_use] mod mos6502;
+mod ppu;
+mod cartridge;
+mod mapper;
+mod controller;
+mod disasm;
+
+use mos6502::CPU;
+use ppu::PPU;
+use memory::{CPUMemory, PPUMemory};
+use cartridge::{BankType, MirrorType, Cartridge};
+use controller::stdctl;
 
 const PIXEL_SIZE: u32 = 2;
 const RGB_COLORS: [u32; 64] = [
@@ -289,17 +295,15 @@ fn main() {
     };
     let mt = m.get_cart().get_mirror_type();
     let mapper = RefCell::new(&mut m as &mut memory::VMem);
-    let mut ppu = ppu::PPU::new(memory::PPUMemory::new(&mapper, mt), &mut win);
-    let mut cpu = mos6502::CPU::new(memory::CPUMemory::new(&mut ppu, &mapper, Some(&p1ctl), None));
-    let ptr = &mut cpu as *mut mos6502::CPU;
-    cpu.mem.init(ptr);
+    let mut cpu = CPU::new(CPUMemory::new(&mapper, Some(&p1ctl), None));
+    let mut ppu = PPU::new(PPUMemory::new(&mapper, mt), &mut win);
+    let cpu_ptr = &mut cpu as *mut CPU;
+    cpu.mem.bus.attach(cpu_ptr, &mut ppu);
+    cpu.start();
     loop {
-        cpu.step();
         while cpu.cycle > 0 {
-            if ppu.tick() || ppu.tick() || ppu.tick() {
-                cpu.trigger_delayed_nmi()
-            }
-            cpu.cycle -= 1;
+            cpu.mem.ppu_tick()
         }
+        cpu.step();
     }
 }

@@ -11,39 +11,64 @@ pub trait VMem {
     fn write(&mut self, addr: u16, data: u8);
 }
 
+pub struct Bus<'a> {
+    cpu: *mut CPU<'a>,
+    ppu: *mut PPU<'a>,
+}
+
+impl<'a> Bus<'a> {
+    pub fn new() -> Self {
+        Bus {ppu: null_mut(),
+            cpu: null_mut()}
+    }
+
+    pub fn attach(&mut self, cpu: *mut CPU<'a>, ppu: *mut PPU<'a>) {
+        self.ppu = ppu;
+        self.cpu = cpu;
+    }
+
+    #[inline(always)] fn get_cpu(&self) -> &'a mut CPU<'a> {unsafe{&mut *self.cpu}}
+    #[inline(always)] fn get_ppu(&self) -> &'a mut PPU<'a> {unsafe{&mut *self.ppu}}
+}
+
 pub struct CPUMemory<'a> {
     sram: [u8; 2048],
-    ppu: *mut PPU<'a>,
-    cpu: *mut CPU<'a>,
+    pub bus: Bus<'a>,
     mapper: &'a RefCell<&'a mut VMem>,
     ctl1: Option<&'a Controller>,
     ctl2: Option<&'a Controller>
 }
 
 impl<'a> CPUMemory<'a> {
-    pub fn new(ppu: &mut PPU<'a>,
+    pub fn new(
                mapper: &'a RefCell<&'a mut VMem>,
                ctl1: Option<&'a Controller>,
                ctl2: Option<&'a Controller>) -> Self {
         CPUMemory{sram: [0; 2048],
-                  cpu: null_mut(),
-                  ppu: ppu,
+                  bus: Bus::new(),
                   mapper, ctl1, ctl2}
     }
 
-    pub fn init(&mut self, cpu: *mut CPU<'a>) {
-        self.cpu = cpu;
+    pub fn ppu_tick(&self) {
+        let cpu = self.bus.get_cpu();
+        let ppu = self.bus.get_ppu();
+        if ppu.tick() || ppu.tick() || ppu.tick() {
+            cpu.trigger_nmi();
+        }
+        cpu.cycle -= 1;
     }
 }
 
 impl<'a> VMem for CPUMemory<'a> {
     fn read(&self, addr: u16) -> u8 {
+        self.ppu_tick();
+        let cpu = self.bus.get_cpu();
+        let ppu = self.bus.get_ppu();
         if addr < 0x2000 {
             self.sram[(addr & 0x07ff) as usize]
         } else if addr < 0x4000 {
-            let ppu = unsafe {&mut *self.ppu};
             match addr & 0x7 {
-                0x2 => ppu.read_status(),
+                0x2 => ppu.read_status(cpu),
                 0x4 => ppu.read_oamdata(),
                 0x7 => ppu.read_data(),
                 _ => 0
@@ -62,8 +87,9 @@ impl<'a> VMem for CPUMemory<'a> {
     }
 
     fn write(&mut self, addr: u16, data: u8) {
-        let ppu = unsafe {&mut *self.ppu};
-        let cpu = unsafe {&mut *self.cpu};
+        self.ppu_tick();
+        let cpu = self.bus.get_cpu();
+        let ppu = self.bus.get_ppu();
         if addr < 0x2000 {
             self.sram[(addr & 0x07ff) as usize] = data;
         } else if addr < 0x4000 {
@@ -76,6 +102,7 @@ impl<'a> VMem for CPUMemory<'a> {
                     } /* toggle NMI flag can generate multiple ints */
                 },
                 0x1 => ppu.write_mask(data),
+                0x2 => (),
                 0x3 => ppu.write_oamaddr(data),
                 0x4 => ppu.write_oamdata(data),
                 0x5 => ppu.write_scroll(data),
