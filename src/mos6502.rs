@@ -48,7 +48,7 @@ macro_rules! make_addrtable {
         rel, iny, nil, iny, zpx, zpx, zpx, zpx, nil, aby, nil, aby, abx, abx, abx, abx,
     ];);
 }
-const INST_LENGTH: [u8; 0x100] =  [
+pub const INST_LENGTH: [u8; 0x100] =  [
     1, 2, 0, 0, 2, 2, 2, 0, 1, 2, 1, 0, 3, 3, 3, 0,
     2, 2, 0, 0, 2, 2, 2, 0, 1, 3, 1, 0, 3, 3, 3, 0,
     3, 2, 0, 0, 2, 2, 2, 0, 1, 2, 1, 0, 3, 3, 3, 0,
@@ -623,6 +623,14 @@ macro_rules! make_int {
 }
 
 impl<'a> CPU<'a> {
+    #[inline(always)] pub fn get_a(&self) -> u8 { self.a }
+    #[inline(always)] pub fn get_x(&self) -> u8 { self.x }
+    #[inline(always)] pub fn get_y(&self) -> u8 { self.y }
+    #[inline(always)] pub fn get_status(&self) -> u8 { self.status }
+    #[inline(always)] pub fn get_sp(&self) -> u8 { self.sp }
+    #[inline(always)] pub fn get_mem(&self) -> &VMem{ &self.mem }
+    #[inline(always)] pub fn get_pc(&self) -> u16 { self.pc }
+
     #[inline(always)] pub fn get_carry(&self) -> u8 { (self.status >> 0) & 1 }
     #[inline(always)] pub fn get_zero(&self) -> u8 { (self.status >> 1) & 1 }
     #[inline(always)] pub fn get_int(&self) -> u8 { (self.status >> 2) & 1 }
@@ -668,17 +676,6 @@ impl<'a> CPU<'a> {
         self.cycle += 1;
         let pc = self.pc;
         let opcode = self.mem.read(pc) as usize;
-        /*
-        use disasm;
-        let len = INST_LENGTH[opcode];
-        let mut code = vec![0; len as usize];
-        for i in 0..len as u16 {
-            code[i as usize] = self.mem.read(pc + i);
-        }
-        println!("0x{:04x} {} a:{:02x} x:{:02x} y:{:02x} s: {:02x} sp: {:02x}",
-                 pc, disasm::parse(opcode as u8, &code[1..]),
-                 self.a, self.x, self.y, self.status, self.sp);
-        */
         /* update opr pointing to operands of current inst */
         self.opr = pc.wrapping_add(1);
         /* update program counter pointing to next inst */
@@ -691,9 +688,6 @@ impl<'a> CPU<'a> {
         ops::OPS[opcode](self);
         //(self.cycle - cycle0) as u8
     }
-
-    #[inline(always)]
-    pub fn get_pc(&self) -> u16 { self.pc }
 
     pub fn reset(&mut self) {
         self.pc = read16!(self.mem, RESET_VECTOR as u16);

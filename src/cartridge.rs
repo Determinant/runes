@@ -18,5 +18,6 @@ pub enum BankType {
 pub trait Cartridge {
     fn get_size(&self, kind: BankType) -> usize;
     fn get_bank(&mut self, base: usize, size: usize, kind: BankType) -> *mut [u8];
-    fn get_mirror_type(&self) -> MirrorType;
+    #[inline(always)] fn get_mirror_type(&self) -> MirrorType;
+    #[inline(always)] fn set_mirror_type(&mut self, mt: MirrorType);
 }

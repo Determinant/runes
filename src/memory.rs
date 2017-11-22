@@ -2,6 +2,7 @@
 use ppu::PPU;
 use mos6502::CPU;
 use cartridge::MirrorType;
+use mapper::Mapper;
 use controller::Controller;
 use core::cell::RefCell;
 use core::ptr::null_mut;
@@ -34,14 +35,14 @@ impl<'a> Bus<'a> {
 pub struct CPUMemory<'a> {
     sram: [u8; 2048],
     pub bus: Bus<'a>,
-    mapper: &'a RefCell<&'a mut VMem>,
+    mapper: &'a RefCell<&'a mut Mapper>,
     ctl1: Option<&'a Controller>,
     ctl2: Option<&'a Controller>
 }
 
 impl<'a> CPUMemory<'a> {
     pub fn new(
-               mapper: &'a RefCell<&'a mut VMem>,
+               mapper: &'a RefCell<&'a mut Mapper>,
                ctl1: Option<&'a Controller>,
                ctl2: Option<&'a Controller>) -> Self {
         CPUMemory{sram: [0; 2048],
@@ -129,17 +130,14 @@ impl<'a> VMem for CPUMemory<'a> {
 pub struct PPUMemory<'a> {
     nametable: [u8; 0x800],
     palette: [u8; 0x20],
-    mirror_type: MirrorType,
-    mapper: &'a RefCell<&'a mut VMem>,
+    mapper: &'a RefCell<&'a mut Mapper>,
 }
 
 impl<'a> PPUMemory<'a> {
-    pub fn new(mapper: &'a RefCell<&'a mut VMem>,
-               mirror_type: MirrorType) -> Self {
+    pub fn new(mapper: &'a RefCell<&'a mut Mapper>) -> Self {
         PPUMemory{
             nametable: [0; 0x800],
             palette: [0; 0x20],
-            mirror_type,
             mapper}
     }
 }
@@ -169,7 +167,8 @@ fn get_mirror_palette(addr: u16) -> u16 {
 impl<'a> PPUMemory<'a> {
     #[inline(always)]
     pub fn read_nametable(&self, addr: u16) -> u8 {
-        self.nametable[(get_mirror_addr(self.mirror_type, addr) & 0x7ff) as usize]
+        let mt = self.mapper.borrow().get_cart().get_mirror_type();
+        self.nametable[(get_mirror_addr(mt, addr) & 0x7ff) as usize]
     }
 
     #[inline(always)]
@@ -179,7 +178,8 @@ impl<'a> PPUMemory<'a> {
 
     #[inline(always)]
     pub fn write_nametable(&mut self, addr: u16, data: u8) {
-        self.nametable[(get_mirror_addr(self.mirror_type, addr) & 0x7ff) as usize] = data
+        let mt = self.mapper.borrow().get_cart().get_mirror_type();
+        self.nametable[(get_mirror_addr(mt, addr) & 0x7ff) as usize] = data
     }
 
     #[inline(always)]

@@ -80,6 +80,7 @@ impl Cartridge for SimpleCart {
         })[base..base + size]
     }
     fn get_mirror_type(&self) -> MirrorType {self.mirror_type}
+    fn set_mirror_type(&mut self, mt: MirrorType) {self.mirror_type = mt}
 }
 
 struct SDLWindow<'a> {
@@ -293,15 +294,16 @@ fn main() {
     }
     */
     let p1ctl = stdctl::Joystick::new();
+    let cart = SimpleCart::new(chr_rom, prg_rom, sram, mirror);
     let mut win = SDLWindow::new(&p1ctl);
-    let mut m = match mapper_id {
-        0 | 2 => mapper::Mapper2::new(SimpleCart::new(chr_rom, prg_rom, sram, mirror)),
+    let mut m: Box<mapper::Mapper> = match mapper_id {
+        0 | 2 => Box::new(mapper::Mapper2::new(cart)),
+        1 => Box::new(mapper::Mapper1::new(cart)),
         _ => panic!("unsupported mapper {}", mapper_id)
     };
-    let mt = m.get_cart().get_mirror_type();
-    let mapper = RefCell::new(&mut m as &mut memory::VMem);
+    let mapper = RefCell::new(&mut (*m) as &mut mapper::Mapper);
     let mut cpu = CPU::new(CPUMemory::new(&mapper, Some(&p1ctl), None));
-    let mut ppu = PPU::new(PPUMemory::new(&mapper, mt), &mut win);
+    let mut ppu = PPU::new(PPUMemory::new(&mapper), &mut win);
     let cpu_ptr = &mut cpu as *mut CPU;
     cpu.mem.bus.attach(cpu_ptr, &mut ppu);
     cpu.start();
@@ -309,6 +311,22 @@ fn main() {
         while cpu.cycle > 0 {
             cpu.mem.ppu_tick()
         }
+        /*
+        {
+            use disasm;
+            let pc = cpu.get_pc();
+            let mem = cpu.get_mem();
+            let opcode = mem.read(pc) as usize;
+            let len = mos6502::INST_LENGTH[opcode];
+            let mut code = vec![0; len as usize];
+            for i in 0..len as u16 {
+                code[i as usize] = mem.read(pc + i);
+            }
+            println!("0x{:04x} {} a:{:02x} x:{:02x} y:{:02x} s: {:02x} sp: {:02x}",
+                     pc, disasm::parse(opcode as u8, &code[1..]),
+                     cpu.get_a(), cpu.get_x(), cpu.get_y(), cpu.get_status(), cpu.get_sp());
+        }
+        */
         cpu.step();
     }
 }

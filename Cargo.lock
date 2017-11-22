@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "runes"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "sdl2 0.31.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
