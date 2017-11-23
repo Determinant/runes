@@ -56,7 +56,7 @@ impl<'a, C> Mapper1<'a, C> where C: Cartridge {
                         prg_nbank,
                         chr_nbank,
                         load_reg: 0x10,
-                        ctl_reg: 0,
+                        ctl_reg: 0x0c,
                         prg_banks: [null; 2],
                         chr_banks: [core::mem::uninitialized(),
                                     core::mem::uninitialized()],
@@ -64,7 +64,7 @@ impl<'a, C> Mapper1<'a, C> where C: Cartridge {
             {
                 let c = &mut m.cart;
                     m.prg_banks[0] = &*c.get_bank(0, 0x4000, BankType::PrgRom);
-                    m.prg_banks[1] = &*c.get_bank(0x4000, 0x4000, BankType::PrgRom);
+                    m.prg_banks[1] = &*c.get_bank((prg_nbank - 1) << 14, 0x4000, BankType::PrgRom);
                     m.chr_banks[0] = &mut *c.get_bank(0, 0x1000, BankType::ChrRom);
                     m.chr_banks[1] = &mut *c.get_bank(0x1000, 0x1000, BankType::ChrRom);
                     m.sram = &mut *c.get_bank(0, 0x2000, BankType::Sram);
