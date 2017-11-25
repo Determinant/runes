@@ -440,7 +440,7 @@ impl<'a> PPU<'a> {
                             0 => 0,
                             _ => bg
                         }
-                     }));
+                     }) & 0x3f);
     }
 
     pub fn new(mem: PPUMemory<'a>, scr: &'a mut Screen) -> Self {

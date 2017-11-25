@@ -2,8 +2,8 @@ extern crate core;
 
 use std::fs::File;
 use std::io::Read;
-use core::cell::RefCell;
-use core::intrinsics::transmute;
+use std::cell::RefCell;
+use std::intrinsics::transmute;
 use std::time::{Instant, Duration};
 use std::thread::sleep;
 
