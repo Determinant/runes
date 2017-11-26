@@ -14,6 +14,7 @@ use sdl2::rect::Rect;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use sdl2::audio::{AudioSpecDesired};
 
 mod memory;
 #[macro_use] mod mos6502;
@@ -26,7 +27,8 @@ mod disasm;
 
 use mos6502::CPU;
 use ppu::PPU;
-use memory::{CPUMemory, PPUMemory};
+use apu::APU;
+use memory::{CPUMemory, PPUMemory, VMem};
 use cartridge::{BankType, MirrorType, Cartridge};
 use controller::stdctl;
 
@@ -107,9 +109,8 @@ macro_rules! gen_keymap {
 }
 
 impl<'a> SDLWindow<'a> {
-    fn new(p1_ctl: &'a stdctl::Joystick) -> Self {
+    fn new(sdl_context: &'a sdl2::Sdl, p1_ctl: &'a stdctl::Joystick) -> Self {
         use Keycode::*;
-        let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
         let window = video_subsystem.window("RuNES", WIN_WIDTH, WIN_HEIGHT)
                                     .position_centered()
@@ -183,6 +184,7 @@ fn get_rgb(color: u8) -> (u8, u8, u8) {
     ((c >> 16) as u8, ((c >> 8) & 0xff) as u8, (c & 0xff) as u8)
 }
 
+
 impl<'a> ppu::Screen for SDLWindow<'a> {
     fn put(&mut self, x: u8, y: u8, color: u8) {
         let (r, g, b) = get_rgb(color);
@@ -218,10 +220,74 @@ impl<'a> ppu::Screen for SDLWindow<'a> {
             sleep(diff);
             //println!("{} faster", diff.subsec_nanos() as f64 / 1e6);
         } else {
-            //println!("{} slower", (e - duration_per_frame).subsec_nanos() as f64 / 1e6);
+            //println!("{} slower", (e - self.duration_per_frame).subsec_nanos() as f64 / 1e6);
         }
         self.timer = Instant::now();
         //canvas.set_draw_color(Color::RGB(128, 128, 128));
+    }
+}
+
+struct SDLAudio {
+    device: sdl2::audio::AudioQueue<i16>,
+    buffer: [i16; 1],
+    buffer_cnt: usize
+}
+
+/*
+fn gen_wave(bytes_to_write: i32) -> Vec<i16> {
+    // Generate a square wave
+    let tone_volume = 1_000i16;
+    let period = 48_000 / 256;
+    let sample_count = bytes_to_write;
+    let mut result = Vec::new();
+
+    for x in 0..sample_count {
+        result.push(
+                if (x / period) % 2 == 0 {
+                tone_volume
+                }
+                else {
+                -tone_volume
+                }
+        );
+    }
+    result
+}
+*/
+
+impl SDLAudio {
+    fn new(sdl_context: &sdl2::Sdl) -> Self {
+        let audio_subsystem = sdl_context.audio().unwrap();
+        let desired_spec = AudioSpecDesired {
+            freq: Some(apu::AUDIO_SAMPLE_FREQ as i32),
+            channels: Some(1),
+            samples: Some(4096)
+        };
+    	let device = audio_subsystem.open_queue::<i16, _>(None, &desired_spec).unwrap();
+        let t = SDLAudio {
+            device, buffer: [0; 1], buffer_cnt: 0
+        };
+        t.device.resume();
+		t
+    }
+
+    fn flush(&mut self) {
+        self.device.queue(&self.buffer[..self.buffer_cnt]);
+        self.buffer_cnt = 0;
+    }
+}
+
+impl apu::Speaker for SDLAudio {
+    fn queue(&mut self, sample: u16) {
+        self.buffer[self.buffer_cnt] = sample.wrapping_sub(32768) as i16;
+        self.buffer_cnt += 1;
+        if self.buffer_cnt == self.buffer.len() {
+            self.flush()
+        }
+    }
+
+    fn push(&mut self) {
+        self.flush();
     }
 }
 
@@ -294,9 +360,11 @@ fn main() {
         }
     }
     */
+    let sdl_context = sdl2::init().unwrap();
     let p1ctl = stdctl::Joystick::new();
     let cart = SimpleCart::new(chr_rom, prg_rom, sram, mirror);
-    let mut win = SDLWindow::new(&p1ctl);
+    let mut win = SDLWindow::new(&sdl_context, &p1ctl);
+    let mut spkr = SDLAudio::new(&sdl_context);
     let mut m: Box<mapper::Mapper> = match mapper_id {
         0 | 2 => Box::new(mapper::Mapper2::new(cart)),
         1 => Box::new(mapper::Mapper1::new(cart)),
@@ -305,8 +373,9 @@ fn main() {
     let mapper = RefCell::new(&mut (*m) as &mut mapper::Mapper);
     let mut cpu = CPU::new(CPUMemory::new(&mapper, Some(&p1ctl), None));
     let mut ppu = PPU::new(PPUMemory::new(&mapper), &mut win);
+    let mut apu = APU::new(&mut spkr);
     let cpu_ptr = &mut cpu as *mut CPU;
-    cpu.mem.bus.attach(cpu_ptr, &mut ppu);
+    cpu.mem.bus.attach(cpu_ptr, &mut ppu, &mut apu);
     cpu.start();
     loop {
         while cpu.cycle > 0 {

@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use ppu::PPU;
+use apu::APU;
 use mos6502::CPU;
 use cartridge::MirrorType;
 use mapper::Mapper;
@@ -15,21 +16,27 @@ pub trait VMem {
 pub struct Bus<'a> {
     cpu: *mut CPU<'a>,
     ppu: *mut PPU<'a>,
+    apu: *mut APU<'a>
 }
 
 impl<'a> Bus<'a> {
     pub fn new() -> Self {
         Bus {ppu: null_mut(),
-            cpu: null_mut()}
+            cpu: null_mut(),
+            apu: null_mut()}
     }
 
-    pub fn attach(&mut self, cpu: *mut CPU<'a>, ppu: *mut PPU<'a>) {
+    pub fn attach(&mut self, cpu: *mut CPU<'a>,
+                             ppu: *mut PPU<'a>,
+                             apu: *mut APU<'a>) {
         self.ppu = ppu;
         self.cpu = cpu;
+        self.apu = apu;
     }
 
     #[inline(always)] fn get_cpu(&self) -> &'a mut CPU<'a> {unsafe{&mut *self.cpu}}
     #[inline(always)] fn get_ppu(&self) -> &'a mut PPU<'a> {unsafe{&mut *self.ppu}}
+    #[inline(always)] fn get_apu(&self) -> &'a mut APU<'a> {unsafe{&mut *self.apu}}
 }
 
 pub struct CPUMemory<'a> {
@@ -53,8 +60,12 @@ impl<'a> CPUMemory<'a> {
     pub fn ppu_tick(&self) {
         let cpu = self.bus.get_cpu();
         let ppu = self.bus.get_ppu();
+        let apu = self.bus.get_apu();
         if ppu.tick() || ppu.tick() || ppu.tick() {
-            cpu.trigger_nmi();
+            cpu.trigger_nmi()
+        }
+        if apu.tick() {
+            cpu.trigger_irq()
         }
         cpu.cycle -= 1;
     }
@@ -112,7 +123,18 @@ impl<'a> VMem for CPUMemory<'a> {
                 _ => panic!("invalid ppu reg write access at 0x{:04x}", addr)
             }
         } else if addr < 0x4020 {
+            let apu = self.bus.get_apu();
             match addr {
+                0x4000 => apu.pulse1.write_reg1(data),
+                0x4001 => apu.pulse1.write_reg2(data),
+                0x4002 => apu.pulse1.write_reg3(data),
+                0x4003 => apu.pulse1.write_reg4(data),
+                0x4004 => apu.pulse2.write_reg1(data),
+                0x4005 => apu.pulse2.write_reg2(data),
+                0x4006 => apu.pulse2.write_reg3(data),
+                0x4007 => apu.pulse2.write_reg4(data),
+                0x4015 => apu.write_status(data),
+                0x4017 => apu.write_frame_counter(data),
                 0x4014 => ppu.write_oamdma(data, cpu),
                 0x4016 => {
                     if let Some(c) = self.ctl1 { c.write(data) }
