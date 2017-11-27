@@ -602,8 +602,10 @@ pub struct CPU<'a> {
     ea: u16,    /* effective address */
     imm_val: u8,
     pub cycle: u32,
+    pub elapsed: u32,
     int: Option<IntType>,
-    pub mem: CPUMemory<'a>
+    pub mem: CPUMemory<'a>,
+    sec_callback: &'a mut FnMut(),
 }
 
 macro_rules! make_int {
@@ -637,7 +639,7 @@ impl<'a> CPU<'a> {
     #[inline(always)] pub fn get_over(&self) -> u8 { (self.status >> 6) & 1 }
     #[inline(always)] pub fn get_neg(&self) -> u8 { (self.status >> 7) & 1 }
 
-    pub fn new(mem: CPUMemory<'a>) -> Self {
+    pub fn new(mem: CPUMemory<'a>, sec_callback: &'a mut FnMut()) -> Self {
         let pc = 0;
         /* nes power up state */
         let a = 0;
@@ -652,7 +654,7 @@ impl<'a> CPU<'a> {
             opr: 0, ea: 0, imm_val: 0,
             int: None,
             acc: false,
-            mem}
+            mem, elapsed: 0, sec_callback}
     }
 
     pub fn start(&mut self) {
@@ -687,6 +689,15 @@ impl<'a> CPU<'a> {
         /* execute the inst */
         ops::OPS[opcode](self);
         //(self.cycle - cycle0) as u8
+    }
+
+    pub fn tick(&mut self) {
+        self.cycle -= 1;
+        self.elapsed += 1;
+        if self.elapsed == CPU_FREQ {
+            self.elapsed = 0;
+            (self.sec_callback)();
+        }
     }
 
     pub fn reset(&mut self) {

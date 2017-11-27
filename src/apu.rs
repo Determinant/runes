@@ -9,6 +9,11 @@ pub trait Speaker {
 const CPU_SAMPLE_FREQ: u32 = 240;
 pub const AUDIO_SAMPLE_FREQ: u32 = 44100;
 
+const TRI_SEQ_TABLE: [u8; 32] = [
+    15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5,  4,  3,  2,  1,  0,
+     0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15
+];
+
 const LEN_TABLE: [u8; 32] = [
     10, 254, 20,  2, 40,  4, 80,  6, 160,  8, 60, 10, 14, 12, 26, 14,
     12,  16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30,
@@ -68,47 +73,48 @@ const TND_TABLE: [u16; 203] = [
 ];
 
 struct Sampler {
-    ticks_remain: u32,
-    ticks_now: u32,
-    ticks_unit: u32,
-    ticks_all: u32,
-    ticks_extra: u32,
-    ticks_extra_all: u32,
+    freq2: u32,
+    q0: u32,
+    r0: u32,
+    ddl: (u32, u32),
+    cnt: u32,
+    sec_cnt: u32
 }
 
 impl Sampler {
     fn new(freq1: u32, freq2: u32) -> Self {
-        let unit = freq1 / freq2;
-        let extra = freq1 - unit * freq2;
+        let q0 = freq1 / freq2;
+        let r0 = freq1 - q0 * freq2;
         Sampler {
-            ticks_remain: freq1 - extra,
-            ticks_now: 0,
-            ticks_unit: unit,
-            ticks_all: freq1 - extra,
-            ticks_extra: extra,
-            ticks_extra_all: extra
+            freq2,
+            q0,
+            r0,
+            ddl: (q0, r0),
+            cnt: 0,
+            sec_cnt: 0
         }
     }
 
     fn tick(&mut self) -> (bool, bool) {
-        let unit = self.ticks_unit;
-        if self.ticks_now == 0 {
-            self.ticks_now = unit;
-            self.ticks_remain -= unit;
-            if self.ticks_remain == 0 {
-                /* compensate to last exactly 1 sec */
-                self.ticks_now += self.ticks_remain;
-                /* reload for the next second */
-                self.ticks_remain = self.ticks_all;
-                self.ticks_extra = self.ticks_extra_all;
+        let (q, r) = self.ddl;
+        if self.cnt == q {
+            let nr = r + self.r0;
+            self.ddl = if nr > self.freq2 {
+                (self.q0, nr - self.freq2)
+            } else {
+                (self.q0 - 1, nr)
+            };
+            self.cnt = 0;
+            self.sec_cnt += 1;
+            let sec = self.sec_cnt == self.freq2;
+            if sec {
+                self.sec_cnt = 0
             }
-            if self.ticks_extra > 0 {
-                self.ticks_extra -= 1;
-                self.ticks_now += 1;
-            }
+            (true, sec)
+        } else {
+            self.cnt += 1;
+            (false, false)
         }
-        self.ticks_now -= 1;
-        (self.ticks_now == 0, self.ticks_remain == self.ticks_all)
     }
 }
 
@@ -169,16 +175,18 @@ impl Pulse {
         let mut reload = self.swp_rld;
         if self.swp_lvl == 0 {
             reload = true;
-            let p = self.timer_period;
-            let mut delta = p >> self.swp_count;
-            if self.swp_neg {
-                delta = !delta;
-                if self.comple { delta += 1; } /* two's complement */
-            }
-            p.wrapping_add(delta);
-            self.muted = self.timer_period < 8 || (self.timer_period >> 11 != 0);
-            if !self.muted && self.swp_en && self.swp_count != 0 {
-                self.timer_period = p;
+            if self.swp_en {
+                let mut p = self.timer_period;
+                let mut delta = p >> self.swp_count;
+                if self.swp_neg {
+                    delta = !delta;
+                    if self.comple { delta += 1; } /* two's complement */
+                }
+                p = p.wrapping_add(delta);
+                self.muted = p < 8 || (p >> 11 != 0);
+                if !self.muted && self.swp_count != 0 {
+                    self.timer_period = p;
+                }
             }
         } else {
             self.swp_lvl -= 1;
@@ -274,15 +282,117 @@ impl Pulse {
         Pulse {env_period: 0, env_lvl: 0, decay_lvl: 0,
                env_start: false, env_loop: false, env_const: false, env_vol: 0,
                swp_count: 0, swp_period: 0, swp_lvl: 0,
-               swp_en: false, swp_neg: false, swp_rld: false, muted: true,
+               swp_en: false, swp_neg: false, swp_rld: false, muted: false,
                len_lvl: 0, timer_period: 0, timer_lvl: 0,
                seq_wave: 0, seq_cnt: 0, enabled: false, comple}
+    }
+}
+
+pub struct Triangle {
+    /* linear counter */
+    cnt_rld: bool,
+    cnt_lvl: u8,
+    cnt_rld_val: u8,
+    /* length counter */
+    len_lvl: u8,
+    /* timer */
+    timer_period: u16,
+    timer_lvl: u16,
+    /* sequencer */
+    seq_cnt: u8,
+    enabled: bool,
+    /* misc */
+    ctrl: bool
+}
+
+impl Triangle {
+    fn tick_counter(&mut self) {
+        if self.cnt_rld {
+            self.cnt_lvl = self.cnt_rld_val
+        } else if self.cnt_lvl > 0 {
+            self.cnt_lvl -= 1
+        }
+        if !self.ctrl {
+            self.cnt_rld = false
+        }
+    }
+
+    fn tick_length(&mut self) {
+        if self.len_lvl > 0 && !self.ctrl {
+            self.len_lvl -= 1
+        }
+    }
+
+
+    fn tick_timer(&mut self) {
+        if self.len_lvl > 0 && self.cnt_lvl > 0 {
+            if self.timer_lvl == 0 {
+                self.timer_lvl = self.timer_period;
+                if self.seq_cnt == 31 {
+                    self.seq_cnt = 0
+                } else {
+                    self.seq_cnt += 1
+                }
+            } else {
+                self.timer_lvl -= 1
+            }
+        }
+    }
+
+    fn disable(&mut self) {
+        self.len_lvl = 0;
+        self.enabled = false;
+    }
+
+    fn enable(&mut self) { self.enabled = true }
+
+    fn new() -> Self {
+        Triangle {
+            cnt_rld: false, cnt_lvl: 0, cnt_rld_val: 0,
+            len_lvl: 0, timer_period: 0, timer_lvl: 0,
+            seq_cnt: 0, enabled: false, ctrl: false
+        }
+    }
+
+    fn get_len(&self) -> u8 { self.len_lvl }
+    fn set_cnt_lvl(&mut self, d: u8) { self.cnt_lvl = d }
+    fn set_ctrl(&mut self, b: bool) { self.ctrl = b }
+    fn set_cnt_rld_val(&mut self, d: u8) { self.cnt_rld_val = d }
+    fn set_timer_peroid(&mut self, p: u16) { self.timer_period = p }
+    fn set_len(&mut self, d: u8) {
+        if self.enabled {
+            self.len_lvl = LEN_TABLE[d as usize]
+        }
+    }
+
+    pub fn write_reg1(&mut self, data: u8) {
+        self.set_cnt_rld_val(data & 0x7f);
+        self.set_ctrl(data >> 7 == 1);
+    }
+
+    pub fn write_reg3(&mut self, data: u8) {
+        self.timer_period = (self.timer_period & 0xff00) | data as u16
+    }
+
+    pub fn write_reg4(&mut self, data: u8) {
+        self.set_len(data >> 3);
+        self.timer_period = (self.timer_period & 0x00ff) | ((data as u16 & 7) << 8);
+        self.seq_cnt = 0;
+        self.timer_lvl = self.timer_period;
+        self.cnt_rld = true;
+    }
+
+    fn output(&self) -> u8 {
+        let len = self.len_lvl > 0;
+        let lin = self.cnt_lvl > 0;
+        if len && lin { TRI_SEQ_TABLE[self.seq_cnt as usize] } else { 0 }
     }
 }
 
 pub struct APU<'a> {
     pub pulse1: Pulse,
     pub pulse2: Pulse,
+    pub triangle: Triangle,
     frame_lvl: u8,
     frame_mode: bool, /* true for 5-step mode */
     frame_inh: bool,
@@ -297,6 +407,7 @@ impl<'a> APU<'a> {
     fn tick_env(&mut self) {
         self.pulse1.tick_env();
         self.pulse2.tick_env();
+        self.triangle.tick_counter();
     }
 
     fn tick_len_swp(&mut self) {
@@ -304,11 +415,13 @@ impl<'a> APU<'a> {
         self.pulse1.tick_sweep();
         self.pulse2.tick_length();
         self.pulse2.tick_sweep();
+        self.triangle.tick_length();
     }
     
     pub fn new(spkr: &'a mut Speaker) -> Self {
         APU {
             pulse1: Pulse::new(false), pulse2: Pulse::new(true),
+            triangle: Triangle::new(),
             frame_lvl: 0, frame_mode: false, frame_int: false, frame_inh: false,
             cpu_sampler: Sampler::new(mos6502::CPU_FREQ, CPU_SAMPLE_FREQ),
             audio_sampler: Sampler::new(mos6502::CPU_FREQ, AUDIO_SAMPLE_FREQ),
@@ -320,13 +433,14 @@ impl<'a> APU<'a> {
     pub fn output(&self) -> u16 {
         let pulse_out = PULSE_TABLE[(self.pulse1.output() +
                                     self.pulse2.output()) as usize];
-        let tnd_out = TND_TABLE[0];
+        let tnd_out = TND_TABLE[(self.triangle.output() * 3) as usize];
         pulse_out + tnd_out
     }
 
     pub fn read_status(&mut self) -> u8 {
         let res = if self.pulse1.get_len() > 0 { 1 } else { 0 } |
-                  (if self.pulse1.get_len() > 0 { 1 } else { 0 }) << 1 |
+                  (if self.pulse2.get_len() > 0 { 1 } else { 0 }) << 1 |
+                  (if self.triangle.get_len() > 0 { 1 } else { 0 }) << 2 |
                   (if self.frame_int { 1 } else { 0 }) << 6;
         if self.frame_lvl != 3 {
             self.frame_int = false; /* clear interrupt flag */
@@ -343,6 +457,10 @@ impl<'a> APU<'a> {
             0 => self.pulse2.disable(),
             _ => self.pulse2.enable()
         }
+        match data & 0x4 {
+            0 => self.triangle.disable(),
+            _ => self.triangle.enable()
+        }
     }
 
     pub fn write_frame_counter(&mut self, data: u8) {
@@ -350,11 +468,12 @@ impl<'a> APU<'a> {
         self.frame_mode = data >> 7 == 1;
     }
 
-    pub fn tick_timer(&mut self) {
+    fn tick_timer(&mut self) {
         if self.cycle_even {
             self.pulse1.tick_timer();
             self.pulse2.tick_timer();
         }
+        self.triangle.tick_timer();
     }
 
     fn tick_frame_counter(&mut self) -> bool {

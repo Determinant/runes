@@ -67,7 +67,7 @@ impl<'a> CPUMemory<'a> {
         if apu.tick() {
             cpu.trigger_irq()
         }
-        cpu.cycle -= 1;
+        cpu.tick();
     }
 }
 
@@ -86,7 +86,9 @@ impl<'a> VMem for CPUMemory<'a> {
                 _ => 0
             }
         } else if addr < 0x4020 {
+            let apu = self.bus.get_apu();
             match addr {
+                0x4015 => apu.read_status(),
                 0x4016 => if let Some(c) = self.ctl1 { c.read() } else { 0 },
                 0x4017 => if let Some(c) = self.ctl2 { c.read() } else { 0 },
                 _ => 0
@@ -133,6 +135,9 @@ impl<'a> VMem for CPUMemory<'a> {
                 0x4005 => apu.pulse2.write_reg2(data),
                 0x4006 => apu.pulse2.write_reg3(data),
                 0x4007 => apu.pulse2.write_reg4(data),
+                0x4008 => apu.triangle.write_reg1(data),
+                0x400a => apu.triangle.write_reg3(data),
+                0x400b => apu.triangle.write_reg4(data),
                 0x4015 => apu.write_status(data),
                 0x4017 => apu.write_frame_counter(data),
                 0x4014 => ppu.write_oamdma(data, cpu),

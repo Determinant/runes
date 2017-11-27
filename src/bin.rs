@@ -370,8 +370,19 @@ fn main() {
         1 => Box::new(mapper::Mapper1::new(cart)),
         _ => panic!("unsupported mapper {}", mapper_id)
     };
+    let dur_sec = Duration::from_millis(1000);
+    let mut tim_sec = Instant::now();
+    let mut f = || {
+        let e = tim_sec.elapsed();
+        if e < dur_sec {
+            let diff = dur_sec - e;
+            sleep(diff);
+        }
+        tim_sec = Instant::now();
+    };
+
     let mapper = RefCell::new(&mut (*m) as &mut mapper::Mapper);
-    let mut cpu = CPU::new(CPUMemory::new(&mapper, Some(&p1ctl), None));
+    let mut cpu = CPU::new(CPUMemory::new(&mapper, Some(&p1ctl), None), &mut f);
     let mut ppu = PPU::new(PPUMemory::new(&mapper), &mut win);
     let mut apu = APU::new(&mut spkr);
     let cpu_ptr = &mut cpu as *mut CPU;
