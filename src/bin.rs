@@ -32,7 +32,7 @@ use memory::{CPUMemory, PPUMemory, VMem};
 use cartridge::{BankType, MirrorType, Cartridge};
 use controller::stdctl;
 
-const PIXEL_SIZE: u32 = 2;
+const PIXEL_SIZE: u32 = 3;
 const RGB_COLORS: [u32; 64] = [
     0x666666, 0x002a88, 0x1412a7, 0x3b00a4, 0x5c007e, 0x6e0040, 0x6c0600, 0x561d00,
     0x333500, 0x0b4800, 0x005200, 0x004f08, 0x00404d, 0x000000, 0x000000, 0x000000,
@@ -227,10 +227,8 @@ impl<'a> ppu::Screen for SDLWindow<'a> {
     }
 }
 
-struct SDLAudio {
-    device: sdl2::audio::AudioQueue<i16>,
-    buffer: [i16; 1],
-    buffer_cnt: usize
+struct SDLAudio<'a> {
+    device: &'a sdl2::audio::AudioQueue<i16>,
 }
 
 /*
@@ -255,39 +253,22 @@ fn gen_wave(bytes_to_write: i32) -> Vec<i16> {
 }
 */
 
-impl SDLAudio {
-    fn new(sdl_context: &sdl2::Sdl) -> Self {
-        let audio_subsystem = sdl_context.audio().unwrap();
-        let desired_spec = AudioSpecDesired {
-            freq: Some(apu::AUDIO_SAMPLE_FREQ as i32),
-            channels: Some(1),
-            samples: Some(4096)
-        };
-    	let device = audio_subsystem.open_queue::<i16, _>(None, &desired_spec).unwrap();
+impl<'a> SDLAudio<'a> {
+    fn new(device: &'a sdl2::audio::AudioQueue<i16>) -> Self {
         let t = SDLAudio {
-            device, buffer: [0; 1], buffer_cnt: 0
+            device
         };
         t.device.resume();
 		t
     }
-
-    fn flush(&mut self) {
-        self.device.queue(&self.buffer[..self.buffer_cnt]);
-        self.buffer_cnt = 0;
-    }
 }
 
-impl apu::Speaker for SDLAudio {
+impl<'a> apu::Speaker for SDLAudio<'a> {
     fn queue(&mut self, sample: u16) {
-        self.buffer[self.buffer_cnt] = sample.wrapping_sub(32768) as i16;
-        self.buffer_cnt += 1;
-        if self.buffer_cnt == self.buffer.len() {
-            self.flush()
-        }
+        self.device.queue(&[sample.wrapping_sub(32768) as i16]);
     }
 
     fn push(&mut self) {
-        self.flush();
     }
 }
 
@@ -360,11 +341,20 @@ fn main() {
         }
     }
     */
+
     let sdl_context = sdl2::init().unwrap();
+    let audio_subsystem = sdl_context.audio().unwrap();
+    let desired_spec = AudioSpecDesired {
+        freq: Some(apu::AUDIO_SAMPLE_FREQ as i32),
+        channels: Some(1),
+        samples: Some(4096)
+    };
+    let device = audio_subsystem.open_queue::<i16, _>(None, &desired_spec).unwrap();
+
     let p1ctl = stdctl::Joystick::new();
     let cart = SimpleCart::new(chr_rom, prg_rom, sram, mirror);
     let mut win = SDLWindow::new(&sdl_context, &p1ctl);
-    let mut spkr = SDLAudio::new(&sdl_context);
+    let mut spkr = SDLAudio::new(&device);
     let mut m: Box<mapper::Mapper> = match mapper_id {
         0 | 2 => Box::new(mapper::Mapper2::new(cart)),
         1 => Box::new(mapper::Mapper1::new(cart)),

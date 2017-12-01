@@ -150,13 +150,12 @@ pub struct Pulse {
 
 impl Pulse {
     fn tick_env(&mut self) {
-        /* should be clocked by frame counter */
         if !self.env_start {
             if self.env_lvl == 0 {
                 self.env_lvl = self.env_period;
                 if self.decay_lvl == 0 {
                     if self.env_loop {
-                        self.decay_lvl = 15;
+                        self.decay_lvl = 0xf;
                     }
                 } else {
                     self.decay_lvl -= 1;
@@ -165,7 +164,7 @@ impl Pulse {
                 self.env_lvl -= 1;
             }
         } else {
-            self.decay_lvl = 15;
+            self.decay_lvl = 0xf;
             self.env_start = false;
             self.env_lvl = self.env_period;
         }
@@ -176,7 +175,7 @@ impl Pulse {
         if self.swp_lvl == 0 {
             reload = true;
             if self.swp_en {
-                let mut p = self.timer_period;
+                let mut p: u16 = self.timer_period;
                 let mut delta = p >> self.swp_count;
                 if self.swp_neg {
                     delta = !delta;
@@ -254,18 +253,19 @@ impl Pulse {
         self.set_const(data & 0x10 == 0x10);
         self.set_env_period(data & 0xf);
         self.set_env_vol(data & 0xf);
-        self.env_start = true;
     }
 
     pub fn write_reg2(&mut self, data: u8) { self.set_sweep(data) }
 
     pub fn write_reg3(&mut self, data: u8) {
-        self.timer_period = (self.timer_period & 0xff00) | data as u16
+        let p = (self.timer_period & 0xff00) | data as u16;
+        self.set_timer_period(p);
     }
 
     pub fn write_reg4(&mut self, data: u8) {
         self.set_len(data >> 3);
-        self.timer_period = (self.timer_period & 0x00ff) | ((data as u16 & 7) << 8);
+        let p = (self.timer_period & 0x00ff) | ((data as u16 & 7) << 8);
+        self.set_timer_period(p);
         self.seq_cnt = 0;
         self.env_start = true;
     }
@@ -358,7 +358,6 @@ impl Triangle {
     fn set_cnt_lvl(&mut self, d: u8) { self.cnt_lvl = d }
     fn set_ctrl(&mut self, b: bool) { self.ctrl = b }
     fn set_cnt_rld_val(&mut self, d: u8) { self.cnt_rld_val = d }
-    fn set_timer_peroid(&mut self, p: u16) { self.timer_period = p }
     fn set_len(&mut self, d: u8) {
         if self.enabled {
             self.len_lvl = LEN_TABLE[d as usize]
@@ -371,22 +370,17 @@ impl Triangle {
     }
 
     pub fn write_reg3(&mut self, data: u8) {
-        self.timer_period = (self.timer_period & 0xff00) | data as u16
+        self.timer_period = (self.timer_period & 0xff00) | data as u16;
     }
 
     pub fn write_reg4(&mut self, data: u8) {
         self.set_len(data >> 3);
         self.timer_period = (self.timer_period & 0x00ff) | ((data as u16 & 7) << 8);
-        self.seq_cnt = 0;
         self.timer_lvl = self.timer_period;
         self.cnt_rld = true;
     }
 
-    fn output(&self) -> u8 {
-        let len = self.len_lvl > 0;
-        let lin = self.cnt_lvl > 0;
-        if len && lin { TRI_SEQ_TABLE[self.seq_cnt as usize] } else { 0 }
-    }
+    fn output(&self) -> u8 { TRI_SEQ_TABLE[self.seq_cnt as usize] }
 }
 
 pub struct APU<'a> {
@@ -466,6 +460,9 @@ impl<'a> APU<'a> {
     pub fn write_frame_counter(&mut self, data: u8) {
         self.frame_inh = data & 0x40 == 1;
         self.frame_mode = data >> 7 == 1;
+        if self.frame_mode {
+            self.tick_len_swp()
+        }
     }
 
     fn tick_timer(&mut self) {
@@ -480,9 +477,10 @@ impl<'a> APU<'a> {
         let f = self.frame_lvl;
         match self.frame_mode {
             false => {
+                self.frame_lvl = if f == 3 { 0 } else { f + 1 };
                 match f {
-                    0 | 2 => self.tick_env(),
-                    1 => {
+                    1 | 3 => self.tick_env(),
+                    2 => {
                         self.tick_env();
                         self.tick_len_swp();
                     },
@@ -494,18 +492,17 @@ impl<'a> APU<'a> {
                         }
                     },
                 };
-                self.frame_lvl = if f == 3 { 0 } else { f + 1 }
             },
             true => {
+                self.frame_lvl = if f == 4 { 0 } else { f + 1 };
                 match f {
-                    0 | 2 => self.tick_env(),
-                    1 | 4 => {
+                    1 | 3 => self.tick_env(),
+                    0 | 2 => {
                         self.tick_env();
                         self.tick_len_swp();
                     },
-                    _ => ()
+                    _ => self.tick_env()
                 }
-                self.frame_lvl = if f == 4 { 0 } else { f + 1 }
             }
         }
         self.frame_int
