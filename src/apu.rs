@@ -149,6 +149,52 @@ pub struct Pulse {
 }
 
 impl Pulse {
+    pub fn new(comple: bool) -> Self {
+        Pulse {env_period: 0, env_lvl: 0, decay_lvl: 0,
+               env_start: false, env_loop: false, env_const: false, env_vol: 0,
+               swp_count: 0, swp_period: 0, swp_lvl: 0,
+               swp_en: false, swp_neg: false, swp_rld: false, muted: false,
+               len_lvl: 0, timer_period: 0, timer_lvl: 0,
+               seq_wave: 0, seq_cnt: 0, enabled: false, comple}
+    }
+
+    pub fn write_reg1(&mut self, data: u8) {
+        self.seq_wave = DUTY_TABLE[(data >> 6) as usize];
+        self.env_loop = data & 0x20 == 0x20;
+        self.env_const = data & 0x10 == 0x10;
+        self.env_period = data & 0xf;
+        self.env_vol = data & 0xf;
+    }
+
+    pub fn write_reg2(&mut self, data: u8) {
+        self.swp_en = (data >> 7) == 1;
+        self.swp_period = (data >> 4) & 7;
+        self.swp_neg = data & 0x8 == 0x8;
+        self.swp_count = data & 7;
+        self.swp_rld = true;
+    }
+
+    pub fn write_reg3(&mut self, data: u8) {
+        let p = (self.timer_period & 0xff00) | data as u16;
+        self.set_timer_period(p);
+    }
+
+    pub fn write_reg4(&mut self, data: u8) {
+        self.set_len(data >> 3);
+        let p = (self.timer_period & 0x00ff) | ((data as u16 & 7) << 8);
+        self.set_timer_period(p);
+        self.seq_cnt = 0;
+        self.env_start = true;
+    }
+
+    pub fn output(&self) -> u8 {
+        let env = if self.env_const { self.env_vol } else { self.decay_lvl };
+        let swp = !self.muted;
+        let seq = (self.seq_wave >> self.seq_cnt) & 1 == 1;
+        let len = self.len_lvl > 0;
+        if self.enabled && swp && seq && len { env } else { 0 }
+    }
+
     fn tick_env(&mut self) {
         if !self.env_start {
             if self.env_lvl == 0 {
@@ -196,13 +242,6 @@ impl Pulse {
         }
     }
 
-    fn disable(&mut self) {
-        self.len_lvl = 0;
-        self.enabled = false;
-    }
-
-    fn enable(&mut self) { self.enabled = true }
-
     fn tick_length(&mut self) {
         if self.len_lvl > 0 && !self.env_loop {
             self.len_lvl -= 1
@@ -222,69 +261,28 @@ impl Pulse {
         }
     }
 
-    fn get_len(&self) -> u8 { self.len_lvl }
-    fn set_duty(&mut self, b: u8) { self.seq_wave = DUTY_TABLE[b as usize] }
-    fn set_loop(&mut self, b: bool) { self.env_loop = b }
-    fn set_const(&mut self, b: bool) { self.env_const = b }
-    fn set_env_period(&mut self, p: u8) { self.env_period = p } /* 4 bits */
-    fn set_env_vol(&mut self, p: u8) { self.env_vol = p }
-    fn set_sweep(&mut self, d: u8) {
-        self.swp_en = (d >> 7) == 1;
-        self.swp_period = (d >> 4) & 7;
-        self.swp_neg = d & 0x8 == 0x8;
-        self.swp_count = d & 7;
-        self.swp_rld = true;
+    #[inline(always)]
+    fn disable(&mut self) {
+        self.len_lvl = 0;
+        self.enabled = false;
     }
 
-    fn set_timer_period(&mut self, p: u16) {
-        self.muted = p < 8;
-        self.timer_period = p;
-    }
+    #[inline(always)]
+    fn enable(&mut self) { self.enabled = true }
 
+    #[inline(always)] fn get_len(&self) -> u8 { self.len_lvl }
+
+    #[inline(always)]
     fn set_len(&mut self, d: u8) {
         if self.enabled {
             self.len_lvl = LEN_TABLE[d as usize]
         }
     }
 
-    pub fn write_reg1(&mut self, data: u8) {
-        self.set_duty(data >> 6);
-        self.set_loop(data & 0x20 == 0x20);
-        self.set_const(data & 0x10 == 0x10);
-        self.set_env_period(data & 0xf);
-        self.set_env_vol(data & 0xf);
-    }
-
-    pub fn write_reg2(&mut self, data: u8) { self.set_sweep(data) }
-
-    pub fn write_reg3(&mut self, data: u8) {
-        let p = (self.timer_period & 0xff00) | data as u16;
-        self.set_timer_period(p);
-    }
-
-    pub fn write_reg4(&mut self, data: u8) {
-        self.set_len(data >> 3);
-        let p = (self.timer_period & 0x00ff) | ((data as u16 & 7) << 8);
-        self.set_timer_period(p);
-        self.seq_cnt = 0;
-        self.env_start = true;
-    }
-
-    pub fn output(&self) -> u8 {
-        let env = if self.env_const { self.env_vol } else { self.decay_lvl };
-        let swp = !self.muted;
-        let seq = (self.seq_wave >> self.seq_cnt) & 1 == 1;
-        let len = self.len_lvl > 0;
-        if swp && seq && len { env } else { 0 }
-    }
-    
-    pub fn new(comple: bool) -> Self {
-        Pulse {env_period: 0, env_lvl: 0, decay_lvl: 0,
-               env_start: false, env_loop: false, env_const: false, env_vol: 0,
-               swp_count: 0, swp_period: 0, swp_lvl: 0,
-               swp_en: false, swp_neg: false, swp_rld: false, muted: false,
-               len_lvl: 0, timer_period: 0, timer_lvl: 0,
-               seq_wave: 0, seq_cnt: 0, enabled: false, comple}
+    #[inline(always)]
+    fn set_timer_period(&mut self, p: u16) {
+        self.muted = p < 8;
+        self.timer_period = p;
     }
 }
 
@@ -306,6 +304,34 @@ pub struct Triangle {
 }
 
 impl Triangle {
+    fn new() -> Self {
+        Triangle {
+            cnt_rld: false, cnt_lvl: 0, cnt_rld_val: 0,
+            len_lvl: 0, timer_period: 0, timer_lvl: 0,
+            seq_cnt: 0, enabled: false, ctrl: false
+        }
+    }
+
+    pub fn write_reg1(&mut self, data: u8) {
+        self.cnt_rld_val = data & 0x7f;
+        self.ctrl = data >> 7 == 1;
+    }
+
+    pub fn write_reg3(&mut self, data: u8) {
+        self.timer_period = (self.timer_period & 0xff00) | data as u16;
+    }
+
+    pub fn write_reg4(&mut self, data: u8) {
+        self.set_len(data >> 3);
+        self.timer_period = (self.timer_period & 0x00ff) | ((data as u16 & 7) << 8);
+        self.timer_lvl = self.timer_period;
+        self.cnt_rld = true;
+    }
+
+    pub fn output(&self) -> u8 {
+        if self.enabled { TRI_SEQ_TABLE[self.seq_cnt as usize] } else { 0 }
+    }
+
     fn tick_counter(&mut self) {
         if self.cnt_rld {
             self.cnt_lvl = self.cnt_rld_val
@@ -339,48 +365,23 @@ impl Triangle {
         }
     }
 
+    #[inline(always)]
     fn disable(&mut self) {
         self.len_lvl = 0;
         self.enabled = false;
     }
 
+    #[inline(always)]
     fn enable(&mut self) { self.enabled = true }
 
-    fn new() -> Self {
-        Triangle {
-            cnt_rld: false, cnt_lvl: 0, cnt_rld_val: 0,
-            len_lvl: 0, timer_period: 0, timer_lvl: 0,
-            seq_cnt: 0, enabled: false, ctrl: false
-        }
-    }
-
-    fn get_len(&self) -> u8 { self.len_lvl }
-    fn set_cnt_lvl(&mut self, d: u8) { self.cnt_lvl = d }
-    fn set_ctrl(&mut self, b: bool) { self.ctrl = b }
-    fn set_cnt_rld_val(&mut self, d: u8) { self.cnt_rld_val = d }
+    #[inline(always)] fn get_len(&self) -> u8 { self.len_lvl }
+    
+    #[inline(always)]
     fn set_len(&mut self, d: u8) {
         if self.enabled {
             self.len_lvl = LEN_TABLE[d as usize]
         }
     }
-
-    pub fn write_reg1(&mut self, data: u8) {
-        self.set_cnt_rld_val(data & 0x7f);
-        self.set_ctrl(data >> 7 == 1);
-    }
-
-    pub fn write_reg3(&mut self, data: u8) {
-        self.timer_period = (self.timer_period & 0xff00) | data as u16;
-    }
-
-    pub fn write_reg4(&mut self, data: u8) {
-        self.set_len(data >> 3);
-        self.timer_period = (self.timer_period & 0x00ff) | ((data as u16 & 7) << 8);
-        self.timer_lvl = self.timer_period;
-        self.cnt_rld = true;
-    }
-
-    fn output(&self) -> u8 { TRI_SEQ_TABLE[self.seq_cnt as usize] }
 }
 
 pub struct APU<'a> {
@@ -398,20 +399,6 @@ pub struct APU<'a> {
 }
 
 impl<'a> APU<'a> {
-    fn tick_env(&mut self) {
-        self.pulse1.tick_env();
-        self.pulse2.tick_env();
-        self.triangle.tick_counter();
-    }
-
-    fn tick_len_swp(&mut self) {
-        self.pulse1.tick_length();
-        self.pulse1.tick_sweep();
-        self.pulse2.tick_length();
-        self.pulse2.tick_sweep();
-        self.triangle.tick_length();
-    }
-    
     pub fn new(spkr: &'a mut Speaker) -> Self {
         APU {
             pulse1: Pulse::new(false), pulse2: Pulse::new(true),
@@ -422,6 +409,26 @@ impl<'a> APU<'a> {
             cycle_even: false,
             spkr
         }
+    }
+
+    pub fn tick(&mut self) -> bool {
+        let mut irq = false;
+        if let (true, _) = self.cpu_sampler.tick() {
+            irq = self.tick_frame_counter();
+            //print!("+");
+        }
+        if let (true, sec) = self.audio_sampler.tick() {
+            let sample = self.output();
+            self.spkr.queue(sample);
+            //print!(".");
+            if sec {
+                self.spkr.push();
+                //println!("ok");
+            }
+        }
+        self.tick_timer();
+        self.cycle_even = !self.cycle_even;
+        irq
     }
 
     pub fn output(&self) -> u16 {
@@ -473,19 +480,33 @@ impl<'a> APU<'a> {
         self.triangle.tick_timer();
     }
 
+    fn tick_env_cnt(&mut self) {
+        self.pulse1.tick_env();
+        self.pulse2.tick_env();
+        self.triangle.tick_counter();
+    }
+
+    fn tick_len_swp(&mut self) {
+        self.pulse1.tick_length();
+        self.pulse1.tick_sweep();
+        self.pulse2.tick_length();
+        self.pulse2.tick_sweep();
+        self.triangle.tick_length();
+    }
+
     fn tick_frame_counter(&mut self) -> bool {
         let f = self.frame_lvl;
         match self.frame_mode {
             false => {
                 self.frame_lvl = if f == 3 { 0 } else { f + 1 };
                 match f {
-                    1 | 3 => self.tick_env(),
+                    1 | 3 => self.tick_env_cnt(),
                     2 => {
-                        self.tick_env();
+                        self.tick_env_cnt();
                         self.tick_len_swp();
                     },
                     _ => {
-                        self.tick_env();
+                        self.tick_env_cnt();
                         self.tick_len_swp();
                         if !self.frame_inh {
                             self.frame_int = true;
@@ -496,35 +517,15 @@ impl<'a> APU<'a> {
             true => {
                 self.frame_lvl = if f == 4 { 0 } else { f + 1 };
                 match f {
-                    1 | 3 => self.tick_env(),
+                    1 | 3 => self.tick_env_cnt(),
                     0 | 2 => {
-                        self.tick_env();
+                        self.tick_env_cnt();
                         self.tick_len_swp();
                     },
-                    _ => self.tick_env()
+                    _ => self.tick_env_cnt()
                 }
             }
         }
         self.frame_int
-    }
-
-    pub fn tick(&mut self) -> bool {
-        let mut irq = false;
-        if let (true, _) = self.cpu_sampler.tick() {
-            irq = self.tick_frame_counter();
-            //print!("+");
-        }
-        if let (true, sec) = self.audio_sampler.tick() {
-            let sample = self.output();
-            self.spkr.queue(sample);
-            //print!(".");
-            if sec {
-                self.spkr.push();
-                //println!("ok");
-            }
-        }
-        self.tick_timer();
-        self.cycle_even = !self.cycle_even;
-        irq
     }
 }

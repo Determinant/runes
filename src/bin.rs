@@ -28,7 +28,7 @@ mod disasm;
 use mos6502::CPU;
 use ppu::PPU;
 use apu::APU;
-use memory::{CPUMemory, PPUMemory, VMem};
+use memory::{CPUMemory, PPUMemory};
 use cartridge::{BankType, MirrorType, Cartridge};
 use controller::stdctl;
 
@@ -231,28 +231,6 @@ struct SDLAudio<'a> {
     device: &'a sdl2::audio::AudioQueue<i16>,
 }
 
-/*
-fn gen_wave(bytes_to_write: i32) -> Vec<i16> {
-    // Generate a square wave
-    let tone_volume = 1_000i16;
-    let period = 48_000 / 256;
-    let sample_count = bytes_to_write;
-    let mut result = Vec::new();
-
-    for x in 0..sample_count {
-        result.push(
-                if (x / period) % 2 == 0 {
-                tone_volume
-                }
-                else {
-                -tone_volume
-                }
-        );
-    }
-    result
-}
-*/
-
 impl<'a> SDLAudio<'a> {
     fn new(device: &'a sdl2::audio::AudioQueue<i16>) -> Self {
         let t = SDLAudio {
@@ -283,6 +261,21 @@ struct INesHeader {
     flags9: u8,
     flags10: u8,
     padding: [u8; 5]
+}
+
+fn print_cpu_trace(cpu: &CPU) {
+    use disasm;
+    let pc = cpu.get_pc();
+    let mem = cpu.get_mem();
+    let opcode = mem.read_without_tick(pc) as usize;
+    let len = mos6502::INST_LENGTH[opcode];
+    let mut code = vec![0; len as usize];
+    for i in 0..len as u16 {
+        code[i as usize] = mem.read_without_tick(pc + i);
+    }
+    println!("0x{:04x} {} a:{:02x} x:{:02x} y:{:02x} s: {:02x} sp: {:02x}",
+             pc, disasm::parse(opcode as u8, &code[1..]),
+             cpu.get_a(), cpu.get_x(), cpu.get_y(), cpu.get_status(), cpu.get_sp());
 }
 
 fn main() {
@@ -377,27 +370,13 @@ fn main() {
     let mut apu = APU::new(&mut spkr);
     let cpu_ptr = &mut cpu as *mut CPU;
     cpu.mem.bus.attach(cpu_ptr, &mut ppu, &mut apu);
-    cpu.start();
+    cpu.powerup();
     loop {
+        /* consume the leftover cycles from the last instruction */
         while cpu.cycle > 0 {
-            cpu.mem.ppu_tick()
+            cpu.mem.bus.tick()
         }
-        /*
-        {
-            use disasm;
-            let pc = cpu.get_pc();
-            let mem = cpu.get_mem();
-            let opcode = mem.read(pc) as usize;
-            let len = mos6502::INST_LENGTH[opcode];
-            let mut code = vec![0; len as usize];
-            for i in 0..len as u16 {
-                code[i as usize] = mem.read(pc + i);
-            }
-            println!("0x{:04x} {} a:{:02x} x:{:02x} y:{:02x} s: {:02x} sp: {:02x}",
-                     pc, disasm::parse(opcode as u8, &code[1..]),
-                     cpu.get_a(), cpu.get_x(), cpu.get_y(), cpu.get_status(), cpu.get_sp());
-        }
-        */
+        //print_cpu_trace(&cpu);
         cpu.step();
     }
 }

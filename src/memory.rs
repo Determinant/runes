@@ -13,17 +13,17 @@ pub trait VMem {
     fn write(&mut self, addr: u16, data: u8);
 }
 
-pub struct Bus<'a> {
+pub struct CPUBus<'a> {
     cpu: *mut CPU<'a>,
     ppu: *mut PPU<'a>,
     apu: *mut APU<'a>
 }
 
-impl<'a> Bus<'a> {
+impl<'a> CPUBus<'a> {
     pub fn new() -> Self {
-        Bus {ppu: null_mut(),
-            cpu: null_mut(),
-            apu: null_mut()}
+        CPUBus {ppu: null_mut(),
+                cpu: null_mut(),
+                apu: null_mut()}
     }
 
     pub fn attach(&mut self, cpu: *mut CPU<'a>,
@@ -37,11 +37,24 @@ impl<'a> Bus<'a> {
     #[inline(always)] fn get_cpu(&self) -> &'a mut CPU<'a> {unsafe{&mut *self.cpu}}
     #[inline(always)] fn get_ppu(&self) -> &'a mut PPU<'a> {unsafe{&mut *self.ppu}}
     #[inline(always)] fn get_apu(&self) -> &'a mut APU<'a> {unsafe{&mut *self.apu}}
+
+    pub fn tick(&self) {
+        let cpu = self.get_cpu();
+        let ppu = self.get_ppu();
+        let apu = self.get_apu();
+        if ppu.tick() || ppu.tick() || ppu.tick() {
+            cpu.trigger_nmi()
+        }
+        if apu.tick() {
+            cpu.trigger_irq()
+        }
+        cpu.tick();
+    }
 }
 
 pub struct CPUMemory<'a> {
     sram: [u8; 2048],
-    pub bus: Bus<'a>,
+    pub bus: CPUBus<'a>,
     mapper: &'a RefCell<&'a mut Mapper>,
     ctl1: Option<&'a Controller>,
     ctl2: Option<&'a Controller>
@@ -53,27 +66,15 @@ impl<'a> CPUMemory<'a> {
                ctl1: Option<&'a Controller>,
                ctl2: Option<&'a Controller>) -> Self {
         CPUMemory{sram: [0; 2048],
-                  bus: Bus::new(),
+                  bus: CPUBus::new(),
                   mapper, ctl1, ctl2}
     }
 
-    pub fn ppu_tick(&self) {
-        let cpu = self.bus.get_cpu();
-        let ppu = self.bus.get_ppu();
-        let apu = self.bus.get_apu();
-        if ppu.tick() || ppu.tick() || ppu.tick() {
-            cpu.trigger_nmi()
-        }
-        if apu.tick() {
-            cpu.trigger_irq()
-        }
-        cpu.tick();
+    pub fn get_bus(&'a self) -> &'a CPUBus<'a> {
+        &self.bus
     }
-}
 
-impl<'a> VMem for CPUMemory<'a> {
-    fn read(&self, addr: u16) -> u8 {
-        self.ppu_tick();
+    pub fn read_without_tick(&self, addr: u16) -> u8 {
         let cpu = self.bus.get_cpu();
         let ppu = self.bus.get_ppu();
         if addr < 0x2000 {
@@ -100,8 +101,7 @@ impl<'a> VMem for CPUMemory<'a> {
         }
     }
 
-    fn write(&mut self, addr: u16, data: u8) {
-        self.ppu_tick();
+    pub fn write_without_tick(&mut self, addr: u16, data: u8) {
         let cpu = self.bus.get_cpu();
         let ppu = self.bus.get_ppu();
         if addr < 0x2000 {
@@ -151,6 +151,18 @@ impl<'a> VMem for CPUMemory<'a> {
         } else {
             self.mapper.borrow_mut().write(addr, data)
         }
+    }
+}
+
+impl<'a> VMem for CPUMemory<'a> {
+    fn read(&self, addr: u16) -> u8 {
+        self.bus.tick();
+        self.read_without_tick(addr)
+    }
+
+    fn write(&mut self, addr: u16, data: u8) {
+        self.bus.tick();
+        self.write_without_tick(addr, data);
     }
 }
 
@@ -251,5 +263,4 @@ impl<'a> VMem for PPUMemory<'a> {
             panic!("invalid ppu write access at 0x{:04x}", addr)
         }
     }
-
 }

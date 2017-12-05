@@ -4,7 +4,6 @@ use mos6502::CPU;
 use core::intrinsics::transmute;
 
 pub trait Screen {
-    #[inline(always)]
     fn put(&mut self, x: u8, y: u8, color: u8);
     fn render(&mut self);
 }

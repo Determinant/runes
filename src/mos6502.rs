@@ -511,7 +511,7 @@ mod ops {
 
 mod addr {
     use memory::VMem;
-    use mos6502::{CPU};
+    use mos6502::CPU;
     make_addrtable!(ADDR_MODES, fn (&mut CPU) -> u8);
 
     fn acc(cpu: &mut CPU) -> u8 {
@@ -630,7 +630,7 @@ impl<'a> CPU<'a> {
     #[inline(always)] pub fn get_y(&self) -> u8 { self.y }
     #[inline(always)] pub fn get_status(&self) -> u8 { self.status }
     #[inline(always)] pub fn get_sp(&self) -> u8 { self.sp }
-    #[inline(always)] pub fn get_mem(&self) -> &VMem{ &self.mem }
+    #[inline(always)] pub fn get_mem(&self) -> &CPUMemory<'a> { &self.mem }
     #[inline(always)] pub fn get_pc(&self) -> u16 { self.pc }
 
     #[inline(always)] pub fn get_carry(&self) -> u8 { (self.status >> 0) & 1 }
@@ -657,7 +657,7 @@ impl<'a> CPU<'a> {
             mem, elapsed: 0, sec_callback}
     }
 
-    pub fn start(&mut self) {
+    pub fn powerup(&mut self) {
         self.cycle = 2;
         self.pc = read16!(self.mem, RESET_VECTOR as u16);
     }
@@ -701,10 +701,10 @@ impl<'a> CPU<'a> {
     }
 
     pub fn reset(&mut self) {
+        self.cycle = 2;
         self.pc = read16!(self.mem, RESET_VECTOR as u16);
         self.sp = self.sp.wrapping_sub(3);
         self.status |= INT_FLAG;
-        self.cycle = 0;
         self.int = None;
     }
 
