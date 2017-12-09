@@ -1,6 +1,7 @@
 extern crate core;
 
 use std::fs::File;
+use std::sync::Mutex;
 use std::io::Read;
 use std::cell::RefCell;
 use std::intrinsics::transmute;
@@ -14,7 +15,7 @@ use sdl2::rect::Rect;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use sdl2::audio::{AudioSpecDesired};
+use sdl2::audio::{AudioCallback, AudioSpecDesired};
 
 mod memory;
 #[macro_use] mod mos6502;
@@ -91,8 +92,6 @@ struct SDLWindow<'a> {
     events: sdl2::EventPump,
     frame_buffer: [u8; FB_SIZE],
     texture: sdl2::render::Texture,
-    timer: Instant,
-    duration_per_frame: Duration,
     p1_button_state: u8,
     p1_ctl: &'a stdctl::Joystick,
     p1_keymap: [u8; 256],
@@ -130,10 +129,8 @@ impl<'a> SDLWindow<'a> {
             frame_buffer: [0; FB_SIZE],
             texture: texture_creator.create_texture_streaming(
                         PixelFormatEnum::RGB24, WIN_WIDTH, WIN_HEIGHT).unwrap(),
-            timer: Instant::now(),
-            duration_per_frame: Duration::from_millis(1000 / 60),
             p1_button_state: 0,
-            p1_ctl, p1_keymap: [stdctl::NULL; 256]
+            p1_ctl, p1_keymap: [stdctl::NULL; 256],
         };
         {
             let keymap = &mut res.p1_keymap;
@@ -178,7 +175,7 @@ impl<'a> SDLWindow<'a> {
     }
 }
 
-#[inline]
+#[inline(always)]
 fn get_rgb(color: u8) -> (u8, u8, u8) {
     let c = RGB_COLORS[color as usize];
     ((c >> 16) as u8, ((c >> 8) & 0xff) as u8, (c & 0xff) as u8)
@@ -209,44 +206,107 @@ impl<'a> ppu::Screen for SDLWindow<'a> {
 
     fn render(&mut self) {
         self.texture.update(None, &self.frame_buffer, FB_PITCH).unwrap();
+         //canvas.set_draw_color(Color::RGB(128, 128, 128));
+    }
+
+    fn frame(&mut self) {
         self.canvas.clear();
         self.canvas.copy(&self.texture, None,
                          Some(Rect::new(0, 0, WIN_WIDTH, WIN_HEIGHT))).unwrap();
         self.canvas.present();
         if self.poll() {std::process::exit(0);}
-        let e = self.timer.elapsed();
-        if self.duration_per_frame > e {
-            let diff = self.duration_per_frame - e;
-            sleep(diff);
-            //println!("{} faster", diff.subsec_nanos() as f64 / 1e6);
-        } else {
-            //println!("{} slower", (e - self.duration_per_frame).subsec_nanos() as f64 / 1e6);
+    }
+}
+
+struct CircularBuffer {
+    buffer: [i16; 65536],
+    head: usize,
+    tail: usize
+}
+
+impl CircularBuffer {
+    fn new() -> Self {
+        CircularBuffer {
+            buffer: [0; 65536],
+            head: 0,
+            tail: 1
         }
-        self.timer = Instant::now();
-        //canvas.set_draw_color(Color::RGB(128, 128, 128));
+    }
+
+    fn enque(&mut self, sample: i16) {
+        self.buffer[self.tail] = sample;
+        self.tail += 1;
+        if self.tail == self.buffer.len() {
+            self.tail = 0
+        }
+    }
+
+    fn deque(&mut self) -> i16 {
+        let res = self.buffer[self.head];
+        {
+            let mut h = self.head + 1;
+            if h == self.buffer.len() {
+                h = 0
+            }
+            if h != self.tail {
+                self.head = h
+            }
+        }
+        res
     }
 }
 
 struct SDLAudio<'a> {
-    device: &'a sdl2::audio::AudioQueue<i16>,
+    timer: Instant,
+    duration_per_frame: Duration,
+    lagged: Duration,
+    cnt: u16,
+    buffer: &'a Mutex<&'a mut CircularBuffer>,
 }
 
 impl<'a> SDLAudio<'a> {
-    fn new(device: &'a sdl2::audio::AudioQueue<i16>) -> Self {
-        let t = SDLAudio {
-            device
-        };
-        t.device.resume();
-		t
+    fn new(lbuff: &'a Mutex<&'a mut CircularBuffer>) -> Self {
+        SDLAudio {
+            timer: Instant::now(),
+            duration_per_frame: Duration::from_millis(10),
+            lagged: Duration::new(0, 0),
+            cnt: 0,
+            buffer: lbuff,
+        }
+    }
+}
+
+struct SDLAudioPlayback<'a>(&'a Mutex<&'a mut CircularBuffer>);
+
+impl<'a> AudioCallback for SDLAudioPlayback<'a> {
+    type Channel = i16;
+    fn callback(&mut self, out: &mut[i16]) {
+        let mut b = self.0.lock().unwrap();
+        for x in out.iter_mut() {
+            *x = b.deque()
+        }
     }
 }
 
 impl<'a> apu::Speaker for SDLAudio<'a> {
     fn queue(&mut self, sample: u16) {
-        self.device.queue(&[sample.wrapping_sub(32768) as i16]);
-    }
-
-    fn push(&mut self) {
+        let mut b = self.buffer.lock().unwrap();
+        b.enque(sample.wrapping_sub(32768) as i16);
+        self.cnt += 1;
+        if self.cnt == apu::AUDIO_SAMPLE_FREQ as u16 / 100 {
+            let e = self.timer.elapsed();
+            if self.duration_per_frame > e {
+                let mut diff = self.duration_per_frame - e;
+                let delta = std::cmp::min(diff, self.lagged);
+                diff -= delta;
+                self.lagged -= delta;
+                sleep(diff);
+            } else {
+                self.lagged += e - self.duration_per_frame
+            }
+            self.cnt = 0;
+            self.timer = Instant::now();
+        }
     }
 }
 
@@ -335,37 +395,33 @@ fn main() {
     }
     */
 
+    /* audio */
     let sdl_context = sdl2::init().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();
+    let mut buff = CircularBuffer::new();
+    let lbuff = Mutex::new(&mut buff);
+    let mut spkr = SDLAudio::new(&lbuff);
     let desired_spec = AudioSpecDesired {
         freq: Some(apu::AUDIO_SAMPLE_FREQ as i32),
         channels: Some(1),
         samples: Some(4096)
     };
-    let device = audio_subsystem.open_queue::<i16, _>(None, &desired_spec).unwrap();
+    let device = audio_subsystem.open_playback(None, &desired_spec, |_| {
+        SDLAudioPlayback(&lbuff)
+    }).unwrap();
+    device.resume();
 
     let p1ctl = stdctl::Joystick::new();
     let cart = SimpleCart::new(chr_rom, prg_rom, sram, mirror);
     let mut win = SDLWindow::new(&sdl_context, &p1ctl);
-    let mut spkr = SDLAudio::new(&device);
     let mut m: Box<mapper::Mapper> = match mapper_id {
         0 | 2 => Box::new(mapper::Mapper2::new(cart)),
         1 => Box::new(mapper::Mapper1::new(cart)),
         _ => panic!("unsupported mapper {}", mapper_id)
     };
-    let dur_sec = Duration::from_millis(1000);
-    let mut tim_sec = Instant::now();
-    let mut f = || {
-        let e = tim_sec.elapsed();
-        if e < dur_sec {
-            let diff = dur_sec - e;
-            sleep(diff);
-        }
-        tim_sec = Instant::now();
-    };
 
     let mapper = RefCell::new(&mut (*m) as &mut mapper::Mapper);
-    let mut cpu = CPU::new(CPUMemory::new(&mapper, Some(&p1ctl), None), &mut f);
+    let mut cpu = CPU::new(CPUMemory::new(&mapper, Some(&p1ctl), None)/*, &mut f*/);
     let mut ppu = PPU::new(PPUMemory::new(&mapper), &mut win);
     let mut apu = APU::new(&mut spkr);
     let cpu_ptr = &mut cpu as *mut CPU;

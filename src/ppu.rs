@@ -6,6 +6,7 @@ use core::intrinsics::transmute;
 pub trait Screen {
     fn put(&mut self, x: u8, y: u8, color: u8);
     fn render(&mut self);
+    fn frame(&mut self);
 }
 
 #[repr(C, packed)]
@@ -52,7 +53,7 @@ pub struct PPU<'a> {
     early_read: bool,
     /* IO */
     mem: PPUMemory<'a>,
-    scr: &'a mut Screen,
+    pub scr: &'a mut Screen,
 }
 
 impl<'a> PPU<'a> {
@@ -199,7 +200,6 @@ impl<'a> PPU<'a> {
     const FLAG_OVERFLOW: u8 = 1 << 5;
     const FLAG_SPRITE_ZERO: u8 = 1 << 6;
     const FLAG_VBLANK: u8 = 1 << 7;
-
     #[inline(always)]
     fn fetch_nametable_byte(&mut self) {
         self.bg_nt = self.mem.read_nametable(self.v & 0x0fff);

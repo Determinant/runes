@@ -3,7 +3,6 @@ use mos6502;
 
 pub trait Speaker {
     fn queue(&mut self, sample: u16);
-    fn push(&mut self);
 }
 
 const CPU_SAMPLE_FREQ: u32 = 240;
@@ -72,7 +71,7 @@ const TND_TABLE: [u16; 203] = [
     0xbbfe, 0xbc84, 0xbd09, 0xbd8d, 0xbe11
 ];
 
-struct Sampler {
+pub struct Sampler {
     freq2: u32,
     q0: u32,
     r0: u32,
@@ -82,7 +81,7 @@ struct Sampler {
 }
 
 impl Sampler {
-    fn new(freq1: u32, freq2: u32) -> Self {
+    pub fn new(freq1: u32, freq2: u32) -> Self {
         let q0 = freq1 / freq2;
         let r0 = freq1 - q0 * freq2;
         Sampler {
@@ -95,7 +94,7 @@ impl Sampler {
         }
     }
 
-    fn tick(&mut self) -> (bool, bool) {
+    pub fn tick(&mut self) -> (bool, bool) {
         let (q, r) = self.ddl;
         if self.cnt == q {
             let nr = r + self.r0;
@@ -415,16 +414,10 @@ impl<'a> APU<'a> {
         let mut irq = false;
         if let (true, _) = self.cpu_sampler.tick() {
             irq = self.tick_frame_counter();
-            //print!("+");
         }
-        if let (true, sec) = self.audio_sampler.tick() {
+        if let (true, _) = self.audio_sampler.tick() {
             let sample = self.output();
             self.spkr.queue(sample);
-            //print!(".");
-            if sec {
-                self.spkr.push();
-                //println!("ok");
-            }
         }
         self.tick_timer();
         self.cycle_even = !self.cycle_even;

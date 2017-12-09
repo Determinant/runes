@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use ppu::PPU;
-use apu::APU;
-use mos6502::CPU;
+use apu::{APU, Sampler};
+use mos6502::{CPU, CPU_FREQ};
 use cartridge::MirrorType;
 use mapper::Mapper;
 use controller::Controller;
@@ -16,14 +16,17 @@ pub trait VMem {
 pub struct CPUBus<'a> {
     cpu: *mut CPU<'a>,
     ppu: *mut PPU<'a>,
-    apu: *mut APU<'a>
+    apu: *mut APU<'a>,
+    ppu_sampler: RefCell<Sampler>,
 }
 
 impl<'a> CPUBus<'a> {
     pub fn new() -> Self {
         CPUBus {ppu: null_mut(),
                 cpu: null_mut(),
-                apu: null_mut()}
+                apu: null_mut(),
+                ppu_sampler: RefCell::new(Sampler::new(CPU_FREQ, 60)),
+            }
     }
 
     pub fn attach(&mut self, cpu: *mut CPU<'a>,
@@ -47,6 +50,9 @@ impl<'a> CPUBus<'a> {
         }
         if apu.tick() {
             cpu.trigger_irq()
+        }
+        if let (true, _) = self.ppu_sampler.borrow_mut().tick() {
+            ppu.scr.frame()
         }
         cpu.tick();
     }
@@ -74,6 +80,7 @@ impl<'a> CPUMemory<'a> {
         &self.bus
     }
 
+    #[inline(always)]
     pub fn read_without_tick(&self, addr: u16) -> u8 {
         let cpu = self.bus.get_cpu();
         let ppu = self.bus.get_ppu();
@@ -101,6 +108,7 @@ impl<'a> CPUMemory<'a> {
         }
     }
 
+    #[inline(always)]
     pub fn write_without_tick(&mut self, addr: u16, data: u8) {
         let cpu = self.bus.get_cpu();
         let ppu = self.bus.get_ppu();
