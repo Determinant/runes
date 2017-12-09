@@ -1,12 +1,10 @@
 extern crate core;
 
 use std::fs::File;
-use std::sync::Mutex;
+use std::sync::{Mutex, Condvar};
 use std::io::Read;
 use std::cell::RefCell;
 use std::intrinsics::transmute;
-use std::time::{Instant, Duration};
-use std::thread::sleep;
 
 extern crate sdl2;
 
@@ -256,56 +254,41 @@ impl CircularBuffer {
     }
 }
 
-struct SDLAudio<'a> {
-    timer: Instant,
-    duration_per_frame: Duration,
-    lagged: Duration,
-    cnt: u16,
-    buffer: &'a Mutex<&'a mut CircularBuffer>,
+struct AudioSync<'a> {
+    time_barrier: Condvar,
+    buffer: Mutex<(&'a mut CircularBuffer, u16)>,
 }
 
-impl<'a> SDLAudio<'a> {
-    fn new(lbuff: &'a Mutex<&'a mut CircularBuffer>) -> Self {
-        SDLAudio {
-            timer: Instant::now(),
-            duration_per_frame: Duration::from_millis(10),
-            lagged: Duration::new(0, 0),
-            cnt: 0,
-            buffer: lbuff,
-        }
-    }
-}
-
-struct SDLAudioPlayback<'a>(&'a Mutex<&'a mut CircularBuffer>);
+struct SDLAudio<'a>(&'a AudioSync<'a>);
+struct SDLAudioPlayback<'a>(&'a AudioSync<'a>);
 
 impl<'a> AudioCallback for SDLAudioPlayback<'a> {
     type Channel = i16;
     fn callback(&mut self, out: &mut[i16]) {
-        let mut b = self.0.lock().unwrap();
-        for x in out.iter_mut() {
-            *x = b.deque()
+        let mut m = self.0.buffer.lock().unwrap();
+        {
+            let b = &mut m.0;
+            for x in out.iter_mut() {
+                *x = b.deque()
+            }
         }
+        if m.1 >= 4096 {
+            m.1 -= 4096
+        }
+        self.0.time_barrier.notify_one();
     }
 }
 
 impl<'a> apu::Speaker for SDLAudio<'a> {
     fn queue(&mut self, sample: u16) {
-        let mut b = self.buffer.lock().unwrap();
-        b.enque(sample.wrapping_sub(32768) as i16);
-        self.cnt += 1;
-        if self.cnt == apu::AUDIO_SAMPLE_FREQ as u16 / 100 {
-            let e = self.timer.elapsed();
-            if self.duration_per_frame > e {
-                let mut diff = self.duration_per_frame - e;
-                let delta = std::cmp::min(diff, self.lagged);
-                diff -= delta;
-                self.lagged -= delta;
-                sleep(diff);
-            } else {
-                self.lagged += e - self.duration_per_frame
-            }
-            self.cnt = 0;
-            self.timer = Instant::now();
+        let mut m = self.0.buffer.lock().unwrap();
+        {
+            let b = &mut m.0;
+            b.enque(sample.wrapping_sub(32768) as i16);
+        }
+        m.1 += 1;
+        while m.1 >= 4096 {
+            m = self.0.time_barrier.wait(m).unwrap()
         }
     }
 }
@@ -399,15 +382,16 @@ fn main() {
     let sdl_context = sdl2::init().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();
     let mut buff = CircularBuffer::new();
-    let lbuff = Mutex::new(&mut buff);
-    let mut spkr = SDLAudio::new(&lbuff);
+    let audio_sync = AudioSync { time_barrier: Condvar::new(),
+                                 buffer: Mutex::new((&mut buff, 0))};
+    let mut spkr = SDLAudio(&audio_sync);
     let desired_spec = AudioSpecDesired {
         freq: Some(apu::AUDIO_SAMPLE_FREQ as i32),
         channels: Some(1),
         samples: Some(4096)
     };
     let device = audio_subsystem.open_playback(None, &desired_spec, |_| {
-        SDLAudioPlayback(&lbuff)
+        SDLAudioPlayback(&audio_sync)
     }).unwrap();
     device.resume();
 
