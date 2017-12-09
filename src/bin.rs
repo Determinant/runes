@@ -31,7 +31,7 @@ use memory::{CPUMemory, PPUMemory};
 use cartridge::{BankType, MirrorType, Cartridge};
 use controller::stdctl;
 
-const PIXEL_SIZE: u32 = 3;
+const PIXEL_SIZE: u32 = 4;
 const RGB_COLORS: [u32; 64] = [
     0x666666, 0x002a88, 0x1412a7, 0x3b00a4, 0x5c007e, 0x6e0040, 0x6c0600, 0x561d00,
     0x333500, 0x0b4800, 0x005200, 0x004f08, 0x00404d, 0x000000, 0x000000, 0x000000,
@@ -49,6 +49,7 @@ const FB_PITCH: usize = PIX_WIDTH * 3 * (PIXEL_SIZE as usize);
 const FB_SIZE: usize = PIX_HEIGHT * FB_PITCH * (PIXEL_SIZE as usize);
 const WIN_WIDTH: u32 = PIX_WIDTH as u32 * PIXEL_SIZE;
 const WIN_HEIGHT: u32 = PIX_HEIGHT as u32 * PIXEL_SIZE;
+const AUDIO_SAMPLES: u16 = 4096;
 
 pub struct SimpleCart {
     chr_rom: Vec<u8>,
@@ -97,11 +98,7 @@ struct SDLWindow<'a> {
 
 macro_rules! gen_keymap {
     ($tab: ident, [$($x: expr, $y: expr), *]) => {
-        {
-            $(
-                $tab[($x as usize) & 0xff] = $y;
-            )*
-        }
+        {$($tab[($x as usize) & 0xff] = $y;)*}
     };
 }
 
@@ -254,13 +251,13 @@ impl CircularBuffer {
     }
 }
 
-struct AudioSync<'a> {
+struct AudioSync {
     time_barrier: Condvar,
-    buffer: Mutex<(&'a mut CircularBuffer, u16)>,
+    buffer: Mutex<(CircularBuffer, u16)>,
 }
 
-struct SDLAudio<'a>(&'a AudioSync<'a>);
-struct SDLAudioPlayback<'a>(&'a AudioSync<'a>);
+struct SDLAudio<'a>(&'a AudioSync);
+struct SDLAudioPlayback<'a>(&'a AudioSync);
 
 impl<'a> AudioCallback for SDLAudioPlayback<'a> {
     type Channel = i16;
@@ -272,8 +269,8 @@ impl<'a> AudioCallback for SDLAudioPlayback<'a> {
                 *x = b.deque()
             }
         }
-        if m.1 >= 4096 {
-            m.1 -= 4096
+        if m.1 >= AUDIO_SAMPLES {
+            m.1 -= AUDIO_SAMPLES
         }
         self.0.time_barrier.notify_one();
     }
@@ -287,7 +284,7 @@ impl<'a> apu::Speaker for SDLAudio<'a> {
             b.enque(sample.wrapping_sub(32768) as i16);
         }
         m.1 += 1;
-        while m.1 >= 4096 {
+        while m.1 >= AUDIO_SAMPLES {
             m = self.0.time_barrier.wait(m).unwrap()
         }
     }
@@ -335,7 +332,7 @@ fn main() {
         _ => MirrorType::Four,
     };
     let mapper_id = (header.flags7 & 0xf0) | (header.flags6 >> 4);
-    println!("maigc:{} prg:{} chr:{} mirror:{} mapper:{}",
+    println!("magic:{}, prg size:{}, chr size:{}, mirror type:{}, mapper:{}",
              std::str::from_utf8(&header.magic).unwrap(),
              header.prg_rom_nbanks,
              header.chr_rom_nbanks,
@@ -360,35 +357,18 @@ fn main() {
     }
     let sram = vec![0; 0x4000];
     println!("read prg {}", file.read(&mut prg_rom[..]).unwrap());
-    /*
-    for (i, v) in prg_rom.iter().enumerate() {
-        print!("{:02x} ", v);
-        if i & 15 == 15 {
-            println!(" {:04x}", i);
-        }
-    }
-    */
     println!("read chr {}", file.read(&mut chr_rom[..]).unwrap());
-    /*
-    for (i, v) in chr_rom.iter().enumerate() {
-        print!("{:02x} ", v);
-        if i & 15 == 15 {
-            println!("");
-        }
-    }
-    */
 
     /* audio */
     let sdl_context = sdl2::init().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();
-    let mut buff = CircularBuffer::new();
     let audio_sync = AudioSync { time_barrier: Condvar::new(),
-                                 buffer: Mutex::new((&mut buff, 0))};
+                                 buffer: Mutex::new((CircularBuffer::new(), 0))};
     let mut spkr = SDLAudio(&audio_sync);
     let desired_spec = AudioSpecDesired {
         freq: Some(apu::AUDIO_SAMPLE_FREQ as i32),
         channels: Some(1),
-        samples: Some(4096)
+        samples: Some(AUDIO_SAMPLES)
     };
     let device = audio_subsystem.open_playback(None, &desired_spec, |_| {
         SDLAudioPlayback(&audio_sync)
@@ -397,7 +377,7 @@ fn main() {
 
     let p1ctl = stdctl::Joystick::new();
     let cart = SimpleCart::new(chr_rom, prg_rom, sram, mirror);
-    let mut win = SDLWindow::new(&sdl_context, &p1ctl);
+    let mut win = Box::new(SDLWindow::new(&sdl_context, &p1ctl));
     let mut m: Box<mapper::Mapper> = match mapper_id {
         0 | 2 => Box::new(mapper::Mapper2::new(cart)),
         1 => Box::new(mapper::Mapper1::new(cart)),
@@ -406,7 +386,7 @@ fn main() {
 
     let mapper = RefCell::new(&mut (*m) as &mut mapper::Mapper);
     let mut cpu = CPU::new(CPUMemory::new(&mapper, Some(&p1ctl), None)/*, &mut f*/);
-    let mut ppu = PPU::new(PPUMemory::new(&mapper), &mut win);
+    let mut ppu = PPU::new(PPUMemory::new(&mapper), &mut (*win));
     let mut apu = APU::new(&mut spkr);
     let cpu_ptr = &mut cpu as *mut CPU;
     cpu.mem.bus.attach(cpu_ptr, &mut ppu, &mut apu);
