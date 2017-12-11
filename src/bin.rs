@@ -193,14 +193,13 @@ impl<'a> ppu::Screen for SDLWindow<'a> {
 
     fn render(&mut self) {
         self.texture.update(None, &self.frame_buffer, FB_PITCH).unwrap();
+    }
+
+    fn frame(&mut self) {
         self.canvas.clear();
         self.canvas.copy(&self.texture, None, None).unwrap();
         self.canvas.present();
         if self.poll() {std::process::exit(0);}
-
-    }
-
-    fn frame(&mut self) {
     }
 }
 
@@ -256,22 +255,23 @@ impl<'a> AudioCallback for SDLAudioPlayback<'a> {
         let mut m = self.0.buffer.lock().unwrap();
         {
             let b = &mut m.0;
+            
             /*
             let l1 = (b.tail + b.buffer.len() - b.head) % b.buffer.len();
             let l2 = out.len();
-            if l1 < l2 {
-            println!("{} {}", l1, l2);
-            }
+            print!("{} {} ", l1, l2);
             */
+            
             for x in out.iter_mut() {
                 *x = b.deque()
             }
         }
         if m.1 >= AUDIO_SAMPLES {
-            m.1 -= AUDIO_SAMPLES
+            m.1 -= AUDIO_SAMPLES;
+            self.0.time_barrier.notify_one();
+        } else {
+            m.1 = 0
         }
-        m.2 = false;
-        self.0.time_barrier.notify_one();
     }
 }
 
@@ -283,12 +283,9 @@ impl<'a> apu::Speaker for SDLAudio<'a> {
             b.enque(sample.wrapping_sub(32768) as i16);
         }
         m.1 += 1;
-        if m.2 {
-            while m.2 && m.1 >= AUDIO_SAMPLES {
-                m = self.0.time_barrier.wait(m).unwrap();
-            }
+        while m.1 >= 2 * AUDIO_SAMPLES {
+            m = self.0.time_barrier.wait(m).unwrap();
         }
-        m.2 = true;
     }
 }
 
