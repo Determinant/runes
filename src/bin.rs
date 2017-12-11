@@ -5,6 +5,8 @@ use std::sync::{Mutex, Condvar};
 use std::io::Read;
 use std::cell::RefCell;
 use std::intrinsics::transmute;
+//use std::time::{Instant, Duration};
+//use std::thread;
 
 extern crate sdl2;
 
@@ -31,7 +33,7 @@ use memory::{CPUMemory, PPUMemory};
 use cartridge::{BankType, MirrorType, Cartridge};
 use controller::stdctl;
 
-const PIXEL_SIZE: u32 = 4;
+const PIXEL_SCALE: u32 = 4;
 const RGB_COLORS: [u32; 64] = [
     0x666666, 0x002a88, 0x1412a7, 0x3b00a4, 0x5c007e, 0x6e0040, 0x6c0600, 0x561d00,
     0x333500, 0x0b4800, 0x005200, 0x004f08, 0x00404d, 0x000000, 0x000000, 0x000000,
@@ -43,13 +45,13 @@ const RGB_COLORS: [u32; 64] = [
     0xe4e594, 0xcfef96, 0xbdf4ab, 0xb3f3cc, 0xb5ebf2, 0xb8b8b8, 0x000000, 0x000000,
 ];
 
-const PIX_WIDTH: usize = 256;
-const PIX_HEIGHT: usize = 240;
-const FB_PITCH: usize = PIX_WIDTH * 3 * (PIXEL_SIZE as usize);
-const FB_SIZE: usize = PIX_HEIGHT * FB_PITCH * (PIXEL_SIZE as usize);
-const WIN_WIDTH: u32 = PIX_WIDTH as u32 * PIXEL_SIZE;
-const WIN_HEIGHT: u32 = PIX_HEIGHT as u32 * PIXEL_SIZE;
-const AUDIO_SAMPLES: u16 = 4096;
+const PIX_WIDTH: u32 = 256;
+const PIX_HEIGHT: u32 = 240;
+const FB_PITCH: usize = PIX_WIDTH as usize * 3;
+const FB_SIZE: usize = PIX_HEIGHT as usize * FB_PITCH;
+const WIN_WIDTH: u32 = PIX_WIDTH * PIXEL_SCALE as u32;
+const WIN_HEIGHT: u32 = PIX_HEIGHT * PIXEL_SCALE as u32;
+const AUDIO_SAMPLES: u16 = 4410;
 
 pub struct SimpleCart {
     chr_rom: Vec<u8>,
@@ -113,9 +115,11 @@ impl<'a> SDLWindow<'a> {
                                     .unwrap();
         let mut canvas = window.into_canvas()
                                     .accelerated()
+                                    .present_vsync()
                                     .build().unwrap();
         let texture_creator = canvas.texture_creator();
         canvas.set_draw_color(Color::RGB(255, 255, 255));
+        canvas.set_scale(PIXEL_SCALE as f32, PIXEL_SCALE as f32).unwrap();
         canvas.clear();
         canvas.present();
         let mut res = SDLWindow {
@@ -123,7 +127,7 @@ impl<'a> SDLWindow<'a> {
             events: sdl_context.event_pump().unwrap(),
             frame_buffer: [0; FB_SIZE],
             texture: texture_creator.create_texture_streaming(
-                        PixelFormatEnum::RGB24, WIN_WIDTH, WIN_HEIGHT).unwrap(),
+                        PixelFormatEnum::RGB24, PIX_WIDTH, PIX_HEIGHT).unwrap(),
             p1_button_state: 0,
             p1_ctl, p1_keymap: [stdctl::NULL; 256],
         };
@@ -178,38 +182,25 @@ fn get_rgb(color: u8) -> (u8, u8, u8) {
 
 
 impl<'a> ppu::Screen for SDLWindow<'a> {
+    #[inline(always)]
     fn put(&mut self, x: u8, y: u8, color: u8) {
         let (r, g, b) = get_rgb(color);
-        let mut pattern = [0; 3 * PIXEL_SIZE as usize];
-        let mut base = ((y as u32 * PIXEL_SIZE) as usize * FB_PITCH) +
-            (x as u32 * 3 * PIXEL_SIZE) as usize;
-        {
-            let mut i = 0;
-            for _ in 0..PIXEL_SIZE {
-                pattern[i] = r;
-                pattern[i + 1] = g;
-                pattern[i + 2] = b;
-                i += 3;
-            }
-        }
-        for _ in 0..PIXEL_SIZE {
-            self.frame_buffer[base..base + 3 * PIXEL_SIZE as usize]
-                .copy_from_slice(&pattern[..]);
-            base += FB_PITCH;
-        }
+        let base = (y as usize * FB_PITCH) + x as usize * 3;
+        self.frame_buffer[base] = r;
+        self.frame_buffer[base + 1] = g;
+        self.frame_buffer[base + 2] = b;
     }
 
     fn render(&mut self) {
         self.texture.update(None, &self.frame_buffer, FB_PITCH).unwrap();
-         //canvas.set_draw_color(Color::RGB(128, 128, 128));
+        self.canvas.clear();
+        self.canvas.copy(&self.texture, None, None).unwrap();
+        self.canvas.present();
+        if self.poll() {std::process::exit(0);}
+
     }
 
     fn frame(&mut self) {
-        self.canvas.clear();
-        self.canvas.copy(&self.texture, None,
-                         Some(Rect::new(0, 0, WIN_WIDTH, WIN_HEIGHT))).unwrap();
-        self.canvas.present();
-        if self.poll() {std::process::exit(0);}
     }
 }
 
@@ -253,7 +244,7 @@ impl CircularBuffer {
 
 struct AudioSync {
     time_barrier: Condvar,
-    buffer: Mutex<(CircularBuffer, u16)>,
+    buffer: Mutex<(CircularBuffer, u16, bool)>,
 }
 
 struct SDLAudio<'a>(&'a AudioSync);
@@ -265,6 +256,13 @@ impl<'a> AudioCallback for SDLAudioPlayback<'a> {
         let mut m = self.0.buffer.lock().unwrap();
         {
             let b = &mut m.0;
+            /*
+            let l1 = (b.tail + b.buffer.len() - b.head) % b.buffer.len();
+            let l2 = out.len();
+            if l1 < l2 {
+            println!("{} {}", l1, l2);
+            }
+            */
             for x in out.iter_mut() {
                 *x = b.deque()
             }
@@ -272,6 +270,7 @@ impl<'a> AudioCallback for SDLAudioPlayback<'a> {
         if m.1 >= AUDIO_SAMPLES {
             m.1 -= AUDIO_SAMPLES
         }
+        m.2 = false;
         self.0.time_barrier.notify_one();
     }
 }
@@ -284,9 +283,12 @@ impl<'a> apu::Speaker for SDLAudio<'a> {
             b.enque(sample.wrapping_sub(32768) as i16);
         }
         m.1 += 1;
-        while m.1 >= AUDIO_SAMPLES {
-            m = self.0.time_barrier.wait(m).unwrap()
+        if m.2 {
+            while m.2 && m.1 >= AUDIO_SAMPLES {
+                m = self.0.time_barrier.wait(m).unwrap();
+            }
         }
+        m.2 = true;
     }
 }
 
@@ -363,7 +365,7 @@ fn main() {
     let sdl_context = sdl2::init().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();
     let audio_sync = AudioSync { time_barrier: Condvar::new(),
-                                 buffer: Mutex::new((CircularBuffer::new(), 0))};
+                                 buffer: Mutex::new((CircularBuffer::new(), 0, true))};
     let mut spkr = SDLAudio(&audio_sync);
     let desired_spec = AudioSpecDesired {
         freq: Some(apu::AUDIO_SAMPLE_FREQ as i32),
