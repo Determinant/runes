@@ -9,9 +9,11 @@ use std::intrinsics::transmute;
 //use std::thread;
 
 extern crate sdl2;
+#[macro_use] extern crate clap;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use clap::{Arg, App};
 
 mod memory;
 #[macro_use] mod mos6502;
@@ -29,7 +31,6 @@ use memory::{CPUMemory, PPUMemory};
 use cartridge::{BankType, MirrorType, Cartridge};
 use controller::stdctl;
 
-const PIXEL_SCALE: u32 = 4;
 const RGB_COLORS: [u32; 64] = [
     0x666666, 0x002a88, 0x1412a7, 0x3b00a4, 0x5c007e, 0x6e0040, 0x6c0600, 0x561d00,
     0x333500, 0x0b4800, 0x005200, 0x004f08, 0x00404d, 0x000000, 0x000000, 0x000000,
@@ -45,8 +46,6 @@ const PIX_WIDTH: u32 = 256;
 const PIX_HEIGHT: u32 = 240;
 const FB_PITCH: usize = PIX_WIDTH as usize * 3;
 const FB_SIZE: usize = PIX_HEIGHT as usize * FB_PITCH;
-const WIN_WIDTH: u32 = PIX_WIDTH * PIXEL_SCALE as u32;
-const WIN_HEIGHT: u32 = PIX_HEIGHT * PIXEL_SCALE as u32;
 const AUDIO_SAMPLES: u16 = 4410;
 const AUDIO_EXTRA_SAMPLES: u16 = 20;
 const AUDIO_ALL_SAMPLES: u16 = AUDIO_SAMPLES + AUDIO_EXTRA_SAMPLES;
@@ -103,10 +102,13 @@ macro_rules! gen_keymap {
 }
 
 impl<'a> SDLWindow<'a> {
-    fn new(sdl_context: &'a sdl2::Sdl, p1_ctl: &'a stdctl::Joystick) -> Self {
+    fn new(sdl_context: &'a sdl2::Sdl,
+           p1_ctl: &'a stdctl::Joystick,
+           pixel_scale: u32) -> Self {
         use Keycode::*;
         let video_subsystem = sdl_context.video().unwrap();
-        let window = video_subsystem.window("RuNES", WIN_WIDTH, WIN_HEIGHT)
+        let window = video_subsystem.window("RuNES", PIX_WIDTH * pixel_scale,
+                                                    PIX_HEIGHT * pixel_scale)
                                     .position_centered()
                                     .opengl()
                                     .build()
@@ -117,7 +119,6 @@ impl<'a> SDLWindow<'a> {
                                     .build().unwrap();
         let texture_creator = canvas.texture_creator();
         canvas.set_draw_color(sdl2::pixels::Color::RGB(255, 255, 255));
-        canvas.set_scale(PIXEL_SCALE as f32, PIXEL_SCALE as f32).unwrap();
         canvas.clear();
         canvas.present();
         let mut res = SDLWindow {
@@ -317,7 +318,24 @@ fn print_cpu_trace(cpu: &CPU) {
 }
 
 fn main() {
-    let fname = std::env::args().nth(1).unwrap();
+    let matches = App::new("RuNES")
+                    .version("0.1.2")
+                    .author("Ted Yin <tederminant@gmail.com>")
+                    .about("A Rust NES emulator")
+                    .arg(Arg::with_name("scale")
+                         .short("x")
+                         .long("scale")
+                         .required(false)
+                         .takes_value(true))
+                    .arg(Arg::with_name("INPUT")
+                         .help("the iNES ROM file")
+                         .required(true)
+                         .index(1))
+                    .get_matches();
+    let scale = std::cmp::min(8,
+                    std::cmp::max(1,
+                        value_t!(matches, "scale", u32).unwrap_or(4)));
+    let fname = matches.value_of("INPUT").unwrap();
     let mut file = File::open(fname).unwrap();
     let mut rheader = [0; 16];
     println!("read {}", file.read(&mut rheader[..]).unwrap());
@@ -337,7 +355,7 @@ fn main() {
              mirror as u8,
              mapper_id);
     if header.flags6 & 0x04 == 0x04 {
-        let mut trainer: [u8; 512] = unsafe{std::mem::uninitialized()};
+        let mut trainer: [u8; 512] = [0; 512];
         file.read(&mut trainer[..]).unwrap();
         println!("skipping trainer");
     }
@@ -347,12 +365,8 @@ fn main() {
     if chr_len == 0 {
         chr_len = 0x2000;
     }
-    let mut prg_rom = Vec::<u8>::with_capacity(prg_len);
-    let mut chr_rom = Vec::<u8>::with_capacity(chr_len);
-    unsafe {
-        prg_rom.set_len(prg_len);
-        chr_rom.set_len(chr_len);
-    }
+    let mut prg_rom = vec![0; prg_len];
+    let mut chr_rom = vec![0; chr_len];
     let sram = vec![0; 0x4000];
     println!("read prg {}", file.read(&mut prg_rom[..]).unwrap());
     println!("read chr {}", file.read(&mut chr_rom[..]).unwrap());
@@ -375,7 +389,7 @@ fn main() {
 
     let p1ctl = stdctl::Joystick::new();
     let cart = SimpleCart::new(chr_rom, prg_rom, sram, mirror);
-    let mut win = Box::new(SDLWindow::new(&sdl_context, &p1ctl));
+    let mut win = Box::new(SDLWindow::new(&sdl_context, &p1ctl, scale));
     let mut m: Box<mapper::Mapper> = match mapper_id {
         0 | 2 => Box::new(mapper::Mapper2::new(cart)),
         1 => Box::new(mapper::Mapper1::new(cart)),

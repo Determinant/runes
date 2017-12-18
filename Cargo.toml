@@ -1,6 +1,6 @@
 [package]
 name = "runes"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Determinant <tederminant@gmail.com>"]
 description = "A no-std NES emulator library written purely in Rust."
 repository = "https://github.com/Determinant/runes"
@@ -11,6 +11,9 @@ license = "MIT"
 [dev-dependencies.sdl2]
 version = "0.31"
 features = ["unsafe_textures"]
+
+[dev-dependencies.clap]
+version = "2.29.0"
 
 [lib]
 name = "runes"

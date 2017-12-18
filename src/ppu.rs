@@ -94,19 +94,13 @@ impl<'a> PPU<'a> {
     #[inline]
     pub fn write_oamdata(&mut self, data: u8) {
         self.reg = data;
-        unsafe {
-            let oam_raw = transmute::<&mut[Sprite; 64], &mut[u8; 256]>(&mut self.oam);
-            oam_raw[self.oamaddr as usize] = data;
-            self.oamaddr = self.oamaddr.wrapping_add(1);
-        }
+        self.get_oam_raw_mut()[self.oamaddr as usize] = data;
+        self.oamaddr = self.oamaddr.wrapping_add(1);
     }
 
     #[inline]
     pub fn read_oamdata(&self) -> u8 {
-        unsafe {
-            let oam_raw = transmute::<&[Sprite; 64], &[u8; 256]>(&self.oam);
-            oam_raw[self.oamaddr as usize]
-        }
+        self.get_oam_raw()[self.oamaddr as usize]
     }
 
     #[inline]
@@ -178,14 +172,16 @@ impl<'a> PPU<'a> {
         cpu.cycle += 1;
         cpu.cycle += cpu.cycle & 1;
         cpu.cycle += 512;
-        unsafe {
-            let oam_raw = transmute::<&mut[Sprite; 64], &mut[u8; 256]>(&mut self.oam);
+        let mut oamaddr = self.oamaddr;
+        {
+            let oam_raw = self.get_oam_raw_mut();
             for _ in 0..0x100 {
-                oam_raw[self.oamaddr as usize] = cpu.mem.read(addr);
+                oam_raw[oamaddr as usize] = cpu.mem.read(addr);
                 addr = addr.wrapping_add(1);
-                self.oamaddr = self.oamaddr.wrapping_add(1);
+                oamaddr = oamaddr.wrapping_add(1);
             }
         }
+        self.oamaddr = oamaddr;
     }
 
     #[inline(always)] fn get_spritesize(&self) -> u8 {(self.ppuctl >> 5) & 1}
@@ -196,6 +192,15 @@ impl<'a> PPU<'a> {
     #[inline(always)] fn get_show_bg(&self) -> bool { (self.ppumask >> 3) & 1 == 1}
     #[inline(always)] fn get_show_sp(&self) -> bool { (self.ppumask >> 4) & 1 == 1}
     #[inline(always)] pub fn get_flag_vblank(&self) -> bool { (self.ppustatus >> 7) & 1 == 1 }
+    #[inline(always)] fn get_oam_arr(&self) -> &[[u8; 4]; 64] {
+        unsafe {transmute::<&[Sprite; 64], &[[u8; 4]; 64]>(&self.oam)}
+    }
+    #[inline(always)] fn get_oam_raw_mut(&mut self) -> &mut[u8; 256] {
+        unsafe {transmute::<&mut[Sprite; 64], &mut[u8; 256]>(&mut self.oam)}
+    }
+    #[inline(always)] fn get_oam_raw(&self) -> &[u8; 256] {
+        unsafe {transmute::<&[Sprite; 64], &[u8; 256]>(&self.oam)}
+    }
 
     const FLAG_OVERFLOW: u8 = 1 << 5;
     const FLAG_SPRITE_ZERO: u8 = 1 << 6;
@@ -333,18 +338,20 @@ impl<'a> PPU<'a> {
         }
         if nidx == 8 {
             let mut m = 0;
-            unsafe {
-                let oam_raw = transmute::<&[Sprite; 64], &[[u8; 4]; 64]>(&self.oam);
+            let mut ppustatus = self.ppustatus;
+            {
+                let oam_raw = self.get_oam_arr();
                 while n < 64 {
                     let y = oam_raw[n][m] as u16;
                     if y <= scanline && scanline < y + h {
-                        self.ppustatus |= PPU::FLAG_OVERFLOW; /* set overflow */
+                        ppustatus |= PPU::FLAG_OVERFLOW; /* set overflow */
                     } else {
                         m = (m + 1) & 3; /* emulates hardware bug */
                     }
                     n += 1;
                 }
             }
+            self.ppustatus = ppustatus;
         }
     }
 
