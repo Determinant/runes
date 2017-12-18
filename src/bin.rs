@@ -10,12 +10,8 @@ use std::intrinsics::transmute;
 
 extern crate sdl2;
 
-use sdl2::pixels::Color;
-use sdl2::rect::Rect;
-use sdl2::pixels::PixelFormatEnum;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use sdl2::audio::{AudioCallback, AudioSpecDesired};
 
 mod memory;
 #[macro_use] mod mos6502;
@@ -52,6 +48,8 @@ const FB_SIZE: usize = PIX_HEIGHT as usize * FB_PITCH;
 const WIN_WIDTH: u32 = PIX_WIDTH * PIXEL_SCALE as u32;
 const WIN_HEIGHT: u32 = PIX_HEIGHT * PIXEL_SCALE as u32;
 const AUDIO_SAMPLES: u16 = 4410;
+const AUDIO_EXTRA_SAMPLES: u16 = 20;
+const AUDIO_ALL_SAMPLES: u16 = AUDIO_SAMPLES + AUDIO_EXTRA_SAMPLES;
 
 pub struct SimpleCart {
     chr_rom: Vec<u8>,
@@ -118,7 +116,7 @@ impl<'a> SDLWindow<'a> {
                                     .present_vsync()
                                     .build().unwrap();
         let texture_creator = canvas.texture_creator();
-        canvas.set_draw_color(Color::RGB(255, 255, 255));
+        canvas.set_draw_color(sdl2::pixels::Color::RGB(255, 255, 255));
         canvas.set_scale(PIXEL_SCALE as f32, PIXEL_SCALE as f32).unwrap();
         canvas.clear();
         canvas.present();
@@ -127,7 +125,8 @@ impl<'a> SDLWindow<'a> {
             events: sdl_context.event_pump().unwrap(),
             frame_buffer: [0; FB_SIZE],
             texture: texture_creator.create_texture_streaming(
-                        PixelFormatEnum::RGB24, PIX_WIDTH, PIX_HEIGHT).unwrap(),
+                        sdl2::pixels::PixelFormatEnum::RGB24,
+                        PIX_WIDTH, PIX_HEIGHT).unwrap(),
             p1_button_state: 0,
             p1_ctl, p1_keymap: [stdctl::NULL; 256],
         };
@@ -204,7 +203,7 @@ impl<'a> ppu::Screen for SDLWindow<'a> {
 }
 
 struct CircularBuffer {
-    buffer: [i16; 65536],
+    buffer: [i16; 2 * AUDIO_ALL_SAMPLES as usize],
     head: usize,
     tail: usize
 }
@@ -212,9 +211,9 @@ struct CircularBuffer {
 impl CircularBuffer {
     fn new() -> Self {
         CircularBuffer {
-            buffer: [0; 65536],
+            buffer: [0; 2 * AUDIO_ALL_SAMPLES as usize],
             head: 0,
-            tail: 1
+            tail: AUDIO_ALL_SAMPLES as usize
         }
     }
 
@@ -228,13 +227,15 @@ impl CircularBuffer {
 
     fn deque(&mut self) -> i16 {
         let res = self.buffer[self.head];
-        {
+        if self.head != self.tail {
             let mut h = self.head + 1;
             if h == self.buffer.len() {
                 h = 0
             }
             if h != self.tail {
                 self.head = h
+            } else {
+                self.tail = self.head
             }
         }
         res
@@ -243,34 +244,32 @@ impl CircularBuffer {
 
 struct AudioSync {
     time_barrier: Condvar,
-    buffer: Mutex<(CircularBuffer, u16, bool)>,
+    buffer: Mutex<(CircularBuffer, u16)>,
 }
 
 struct SDLAudio<'a>(&'a AudioSync);
 struct SDLAudioPlayback<'a>(&'a AudioSync);
 
-impl<'a> AudioCallback for SDLAudioPlayback<'a> {
+impl<'a> sdl2::audio::AudioCallback for SDLAudioPlayback<'a> {
     type Channel = i16;
     fn callback(&mut self, out: &mut[i16]) {
         let mut m = self.0.buffer.lock().unwrap();
         {
             let b = &mut m.0;
-            
-            /*
             let l1 = (b.tail + b.buffer.len() - b.head) % b.buffer.len();
-            let l2 = out.len();
-            print!("{} {} ", l1, l2);
-            */
+            print!("{} ", l1);
             
             for x in out.iter_mut() {
                 *x = b.deque()
             }
         }
+        println!("{}", m.1);
         if m.1 >= AUDIO_SAMPLES {
             m.1 -= AUDIO_SAMPLES;
             self.0.time_barrier.notify_one();
         } else {
-            m.1 = 0
+            m.1 = 0;
+            println!("audio frame skipping");
         }
     }
 }
@@ -280,10 +279,10 @@ impl<'a> apu::Speaker for SDLAudio<'a> {
         let mut m = self.0.buffer.lock().unwrap();
         {
             let b = &mut m.0;
-            b.enque(sample.wrapping_sub(32768) as i16);
+            b.enque(sample.wrapping_sub(1 << 15) as i16);
         }
         m.1 += 1;
-        while m.1 >= 2 * AUDIO_SAMPLES {
+        while m.1 >= AUDIO_ALL_SAMPLES {
             m = self.0.time_barrier.wait(m).unwrap();
         }
     }
@@ -362,9 +361,10 @@ fn main() {
     let sdl_context = sdl2::init().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();
     let audio_sync = AudioSync { time_barrier: Condvar::new(),
-                                 buffer: Mutex::new((CircularBuffer::new(), 0, true))};
+                                 buffer: Mutex::new((CircularBuffer::new(),
+                                                     AUDIO_ALL_SAMPLES))};
     let mut spkr = SDLAudio(&audio_sync);
-    let desired_spec = AudioSpecDesired {
+    let desired_spec = sdl2::audio::AudioSpecDesired {
         freq: Some(apu::AUDIO_SAMPLE_FREQ as i32),
         channels: Some(1),
         samples: Some(AUDIO_SAMPLES)
@@ -372,7 +372,6 @@ fn main() {
     let device = audio_subsystem.open_playback(None, &desired_spec, |_| {
         SDLAudioPlayback(&audio_sync)
     }).unwrap();
-    device.resume();
 
     let p1ctl = stdctl::Joystick::new();
     let cart = SimpleCart::new(chr_rom, prg_rom, sram, mirror);
@@ -390,6 +389,7 @@ fn main() {
     let cpu_ptr = &mut cpu as *mut CPU;
     cpu.mem.bus.attach(cpu_ptr, &mut ppu, &mut apu);
     cpu.powerup();
+    device.resume();
     loop {
         /* consume the leftover cycles from the last instruction */
         while cpu.cycle > 0 {
