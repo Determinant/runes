@@ -34,6 +34,10 @@ const PULSE_TABLE: [u16; 31] = [
     0x41ec
 ];
 
+const NOISE_PERIOD_TABLE: [u16; 16] = [
+    4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068
+];
+
 const TND_TABLE: [u16; 203] = [
     0x0000, 0x01b7, 0x036a, 0x051a, 0x06c6, 0x086f,
     0x0a15, 0x0bb7, 0x0d56, 0x0ef2, 0x108a, 0x121f,
@@ -383,10 +387,125 @@ impl Triangle {
     }
 }
 
+
+pub struct Noise {
+    /* envelope */
+    env_period: u8,
+    env_lvl: u8,
+    decay_lvl: u8,
+    env_start: bool,
+    env_loop: bool,
+    env_const: bool,
+    env_vol: u8,
+    /* length counter */
+    len_lvl: u8,
+    /* timer */
+    timer_period: u16,
+    timer_lvl: u16,
+    /* rng */
+    shift_reg: u16,
+    loop_noise: bool,
+    /* channel */
+    enabled: bool,
+}
+
+impl Noise {
+    pub fn new() -> Self {
+        Noise {env_period: 0, env_lvl: 0, decay_lvl: 0,
+               env_start: false, env_loop: false, env_const: false, env_vol: 0,
+               len_lvl: 0, timer_period: 0, timer_lvl: 0,
+               shift_reg: 1, loop_noise: false,
+               enabled: false}
+    }
+
+    pub fn write_reg1(&mut self, data: u8) {
+        self.env_loop = data & 0x20 == 0x20;
+        self.env_const = data & 0x10 == 0x10;
+        self.env_period = data & 0xf;
+        self.env_vol = data & 0xf;
+    }
+
+    pub fn write_reg3(&mut self, data: u8) {
+        self.loop_noise = (data >> 7) == 1;
+        self.timer_period = NOISE_PERIOD_TABLE[data as usize & 0xf];
+    }
+
+    pub fn write_reg4(&mut self, data: u8) {
+        self.set_len(data >> 3);
+        self.env_start = true;
+    }
+
+    pub fn output(&self) -> u8 {
+        let env = if self.env_const { self.env_vol } else { self.decay_lvl };
+        let len = self.len_lvl > 0;
+        let shift = self.shift_reg & 1 == 0;
+        if self.enabled && shift && len { env } else { 0 }
+    }
+
+    fn tick_env(&mut self) {
+        if !self.env_start {
+            if self.env_lvl == 0 {
+                self.env_lvl = self.env_period;
+                if self.decay_lvl == 0 {
+                    if self.env_loop {
+                        self.decay_lvl = 0xf;
+                    }
+                } else {
+                    self.decay_lvl -= 1;
+                }
+            } else {
+                self.env_lvl -= 1;
+            }
+        } else {
+            self.decay_lvl = 0xf;
+            self.env_start = false;
+            self.env_lvl = self.env_period;
+        }
+    }
+
+    fn tick_length(&mut self) {
+        if self.len_lvl > 0 && !self.env_loop {
+            self.len_lvl -= 1
+        }
+    }
+
+    fn tick_timer(&mut self) {
+        if self.timer_lvl == 0 {
+            self.timer_lvl = self.timer_period;
+            /* shift register is clocked */
+            let bit = if self.loop_noise {6} else {1};
+            let feedback = (self.shift_reg & 1) ^ ((self.shift_reg >> bit) & 1);
+            self.shift_reg = (self.shift_reg >> 1) | (feedback << 14);
+        } else {
+            self.timer_lvl -= 1
+        }
+    }
+
+    #[inline(always)]
+    fn disable(&mut self) {
+        self.len_lvl = 0;
+        self.enabled = false;
+    }
+
+    #[inline(always)]
+    fn enable(&mut self) { self.enabled = true }
+
+    #[inline(always)] fn get_len(&self) -> u8 { self.len_lvl }
+
+    #[inline(always)]
+    fn set_len(&mut self, d: u8) {
+        if self.enabled {
+            self.len_lvl = LEN_TABLE[d as usize]
+        }
+    }
+}
+
+
 pub struct APU<'a> {
     pub pulse1: Pulse,
     pub pulse2: Pulse,
     pub triangle: Triangle,
+    pub noise: Noise,
     frame_lvl: u8,
     frame_mode: bool, /* true for 5-step mode */
     frame_inh: bool,
@@ -402,6 +521,7 @@ impl<'a> APU<'a> {
         APU {
             pulse1: Pulse::new(false), pulse2: Pulse::new(true),
             triangle: Triangle::new(),
+            noise: Noise::new(),
             frame_lvl: 0, frame_mode: false, frame_int: false, frame_inh: false,
             cpu_sampler: Sampler::new(mos6502::CPU_FREQ, CPU_SAMPLE_FREQ),
             audio_sampler: Sampler::new(mos6502::CPU_FREQ, AUDIO_SAMPLE_FREQ),
@@ -427,7 +547,8 @@ impl<'a> APU<'a> {
     pub fn output(&self) -> u16 {
         let pulse_out = PULSE_TABLE[(self.pulse1.output() +
                                     self.pulse2.output()) as usize];
-        let tnd_out = TND_TABLE[(self.triangle.output() * 3) as usize];
+        let tnd_out = TND_TABLE[(self.triangle.output() * 3 +
+                                self.noise.output() * 2) as usize];
         pulse_out + tnd_out
     }
 
@@ -435,6 +556,7 @@ impl<'a> APU<'a> {
         let res = if self.pulse1.get_len() > 0 { 1 } else { 0 } |
                   (if self.pulse2.get_len() > 0 { 1 } else { 0 }) << 1 |
                   (if self.triangle.get_len() > 0 { 1 } else { 0 }) << 2 |
+                  (if self.noise.get_len() > 0 { 1 } else { 0 }) << 3 |
                   (if self.frame_int { 1 } else { 0 }) << 6;
         if self.frame_lvl != 3 {
             self.frame_int = false; /* clear interrupt flag */
@@ -455,6 +577,10 @@ impl<'a> APU<'a> {
             0 => self.triangle.disable(),
             _ => self.triangle.enable()
         }
+        match data & 0x8 {
+            0 => self.noise.disable(),
+            _ => self.noise.enable()
+        }
     }
 
     pub fn write_frame_counter(&mut self, data: u8) {
@@ -469,6 +595,7 @@ impl<'a> APU<'a> {
         if self.cycle_even {
             self.pulse1.tick_timer();
             self.pulse2.tick_timer();
+            self.noise.tick_timer();
         }
         self.triangle.tick_timer();
     }
@@ -477,6 +604,7 @@ impl<'a> APU<'a> {
         self.pulse1.tick_env();
         self.pulse2.tick_env();
         self.triangle.tick_counter();
+        self.noise.tick_env();
     }
 
     fn tick_len_swp(&mut self) {
@@ -485,6 +613,7 @@ impl<'a> APU<'a> {
         self.pulse2.tick_length();
         self.pulse2.tick_sweep();
         self.triangle.tick_length();
+        self.noise.tick_length();
     }
 
     fn tick_frame_counter(&mut self) -> bool {
