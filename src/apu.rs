@@ -1,5 +1,6 @@
 #![allow(dead_code)]
-use mos6502;
+use mos6502::{CPU_FREQ, CPU};
+use memory::CPUBus;
 
 pub trait Speaker {
     fn queue(&mut self, sample: u16);
@@ -36,6 +37,10 @@ const PULSE_TABLE: [u16; 31] = [
 
 const NOISE_PERIOD_TABLE: [u16; 16] = [
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068
+];
+
+const DMC_TABLE: [u16; 16] = [
+    214, 190, 170, 160, 143, 127, 113, 107, 95, 80, 71, 64, 53, 42, 36, 27,
 ];
 
 const TND_TABLE: [u16; 203] = [
@@ -500,12 +505,125 @@ impl Noise {
     }
 }
 
+pub struct DMC {
+    dmc_loop: bool,
+    dmc_cnt: u8,
+    irq_enabled: bool,
+    sample_addr: u16,
+    sample_len: u16,
+    shift_reg: u8,
+    cur_addr: u16,
+    rem_len: u16,
+    level: u8,
+    /* timer */
+    timer_lvl: u16,
+    timer_period: u16,
+    /* channel */
+    enabled: bool
+}
+
+impl DMC {
+    pub fn new() -> Self {
+        DMC {
+            dmc_loop: false, dmc_cnt: 8,
+            irq_enabled: false, sample_addr: 0, sample_len: 0,
+            shift_reg: 0, cur_addr: 0, rem_len: 0, level: 0,
+            timer_lvl: 0, timer_period: 0, enabled: false
+        }
+    }
+
+    pub fn write_reg1(&mut self, data: u8) {
+        self.irq_enabled = (data >> 7) == 1;
+        self.dmc_loop = data & 0x40 == 0x40;
+        self.timer_period = DMC_TABLE[(data & 0xf) as usize];
+    }
+
+    pub fn write_reg2(&mut self, data: u8) {
+        self.level = data & 0x7f
+    }
+
+    pub fn write_reg3(&mut self, data: u8) {
+        self.sample_addr = 0xc000 | ((data as u16) << 6)
+    }
+
+    pub fn write_reg4(&mut self, data: u8) {
+        self.sample_len = ((data as u16) << 4) | 0x1
+    }
+
+    fn restart(&mut self) {
+        self.cur_addr = self.sample_addr;
+        self.rem_len = self.sample_len;
+    }
+
+    fn try_refill(&mut self, cpu: &mut CPU) {
+        if self.rem_len > 0 && self.dmc_cnt == 0 {
+            cpu.cycle += 4;
+            self.shift_reg = cpu.mem.read_without_tick(self.cur_addr);
+            self.dmc_cnt = 8;
+            self.cur_addr = self.cur_addr.wrapping_add(1);
+            if self.cur_addr == 0x0 {
+                self.cur_addr = 0x8000
+            }
+            self.rem_len -= 1;
+            if self.rem_len == 0 && self.dmc_loop {
+                self.restart()
+            }
+        }
+    }
+
+    fn shift(&mut self) {
+        if self.dmc_cnt == 0 { return }
+        if self.shift_reg & 1 == 1 {
+            if self.level < 126 {
+                self.level += 2
+            }
+        } else {
+            if self.level > 1 {
+                self.level -= 2
+            }
+        }
+        self.shift_reg >>= 1;
+        self.dmc_cnt -= 1;
+    }
+
+    fn tick_timer(&mut self, cpu: &mut CPU) {
+        if !self.enabled { return }
+        self.try_refill(cpu);
+        if self.timer_lvl == 0 {
+            self.timer_lvl = self.timer_period;
+            self.shift();
+        } else {
+            self.timer_lvl -= 1
+        }
+    }
+
+    #[inline(always)]
+    fn get_len(&self) -> u16 { self.rem_len }
+
+    #[inline(always)]
+    fn disable(&mut self) {
+        self.enabled = false;
+        self.rem_len = 0;
+    }
+
+    #[inline(always)]
+    fn enable(&mut self) {
+        self.enabled = true;
+        if self.rem_len == 0 {
+            self.restart()
+        }
+    }
+
+    #[inline(always)]
+    fn output(&self) -> u8 { self.level }
+}
 
 pub struct APU<'a> {
     pub pulse1: Pulse,
     pub pulse2: Pulse,
     pub triangle: Triangle,
     pub noise: Noise,
+    pub dmc: DMC,
     frame_lvl: u8,
     frame_mode: bool, /* true for 5-step mode */
     frame_inh: bool,
@@ -513,24 +631,25 @@ pub struct APU<'a> {
     cpu_sampler: Sampler,
     audio_sampler: Sampler,
     cycle_even: bool,
-    spkr: &'a mut Speaker
+    spkr: &'a mut Speaker,
 }
 
 impl<'a> APU<'a> {
-    pub fn new(spkr: &'a mut Speaker) -> Self {
+    pub fn new(spkr: &'a mut Speaker/*, bus: &'a CPUBus<'a>*/) -> Self {
         APU {
             pulse1: Pulse::new(false), pulse2: Pulse::new(true),
             triangle: Triangle::new(),
             noise: Noise::new(),
+            dmc: DMC::new(),
             frame_lvl: 0, frame_mode: false, frame_int: false, frame_inh: true,
-            cpu_sampler: Sampler::new(mos6502::CPU_FREQ, CPU_SAMPLE_FREQ),
-            audio_sampler: Sampler::new(mos6502::CPU_FREQ, AUDIO_SAMPLE_FREQ),
+            cpu_sampler: Sampler::new(CPU_FREQ, CPU_SAMPLE_FREQ),
+            audio_sampler: Sampler::new(CPU_FREQ, AUDIO_SAMPLE_FREQ),
             cycle_even: false,
             spkr
         }
     }
 
-    pub fn tick(&mut self) -> bool {
+    pub fn tick(&mut self, bus: &CPUBus) -> bool {
         let mut irq = false;
         if let (true, _) = self.cpu_sampler.tick() {
             irq = self.tick_frame_counter();
@@ -539,7 +658,7 @@ impl<'a> APU<'a> {
             let sample = self.output();
             self.spkr.queue(sample);
         }
-        self.tick_timer();
+        self.tick_timer(bus.get_cpu());
         self.cycle_even = !self.cycle_even;
         irq
     }
@@ -548,7 +667,8 @@ impl<'a> APU<'a> {
         let pulse_out = PULSE_TABLE[(self.pulse1.output() +
                                     self.pulse2.output()) as usize];
         let tnd_out = TND_TABLE[(self.triangle.output() * 3 +
-                                self.noise.output() * 2) as usize];
+                                self.noise.output() * 2 +
+                                self.dmc.output()) as usize];
         pulse_out + tnd_out
     }
 
@@ -557,6 +677,7 @@ impl<'a> APU<'a> {
                   (if self.pulse2.get_len() > 0 { 1 } else { 0 }) << 1 |
                   (if self.triangle.get_len() > 0 { 1 } else { 0 }) << 2 |
                   (if self.noise.get_len() > 0 { 1 } else { 0 }) << 3 |
+                  (if self.dmc.get_len() > 0 { 1 } else { 0 }) << 4 |
                   (if self.frame_int { 1 } else { 0 }) << 6;
         if self.frame_lvl != 3 {
             self.frame_int = false; /* clear interrupt flag */
@@ -581,6 +702,10 @@ impl<'a> APU<'a> {
             0 => self.noise.disable(),
             _ => self.noise.enable()
         }
+        match data & 0x10 {
+            0 => self.dmc.disable(),
+            _ => self.dmc.enable()
+        }
     }
 
     pub fn write_frame_counter(&mut self, data: u8) {
@@ -591,11 +716,12 @@ impl<'a> APU<'a> {
         }
     }
 
-    fn tick_timer(&mut self) {
+    fn tick_timer(&mut self, cpu: &mut CPU) {
         if self.cycle_even {
             self.pulse1.tick_timer();
             self.pulse2.tick_timer();
             self.noise.tick_timer();
+            self.dmc.tick_timer(cpu);
         }
         self.triangle.tick_timer();
     }

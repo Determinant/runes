@@ -48,7 +48,7 @@ impl<'a> CPUBus<'a> {
         if ppu.tick(self) || ppu.tick(self) || ppu.tick(self) {
             cpu.trigger_nmi()
         }
-        if apu.tick() {
+        if apu.tick(self) {
             cpu.trigger_irq()
         }
         if let (true, _) = self.ppu_sampler.borrow_mut().tick() {
@@ -149,6 +149,10 @@ impl<'a> CPUMemory<'a> {
                 0x400c => apu.noise.write_reg1(data),
                 0x400e => apu.noise.write_reg3(data),
                 0x400f => apu.noise.write_reg4(data),
+                0x4010 => apu.dmc.write_reg1(data),
+                0x4011 => apu.dmc.write_reg2(data),
+                0x4012 => apu.dmc.write_reg3(data),
+                0x4013 => apu.dmc.write_reg4(data),
                 0x4015 => apu.write_status(data),
                 0x4017 => apu.write_frame_counter(data),
                 0x4014 => ppu.write_oamdma(data, cpu),
