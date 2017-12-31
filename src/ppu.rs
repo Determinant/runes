@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use memory::{VMem, PPUMemory};
+use memory::{VMem, PPUMemory, CPUBus};
 use mos6502::CPU;
 use core::intrinsics::transmute;
 
@@ -189,8 +189,8 @@ impl<'a> PPU<'a> {
     #[inline(always)] fn get_vram_inc(&self) -> u8 { (self.ppuctl >> 2) & 1}
     #[inline(always)] fn get_show_leftmost_bg(&self) -> bool { (self.ppumask >> 1) & 1 == 1}
     #[inline(always)] fn get_show_leftmost_sp(&self) -> bool { (self.ppumask >> 2) & 1 == 1}
-    #[inline(always)] fn get_show_bg(&self) -> bool { (self.ppumask >> 3) & 1 == 1}
-    #[inline(always)] fn get_show_sp(&self) -> bool { (self.ppumask >> 4) & 1 == 1}
+    #[inline(always)] pub fn get_show_bg(&self) -> bool { (self.ppumask >> 3) & 1 == 1}
+    #[inline(always)] pub fn get_show_sp(&self) -> bool { (self.ppumask >> 4) & 1 == 1}
     #[inline(always)] pub fn get_flag_vblank(&self) -> bool { (self.ppustatus >> 7) & 1 == 1 }
     #[inline(always)] fn get_oam_arr(&self) -> &[[u8; 4]; 64] {
         unsafe {transmute::<&[Sprite; 64], &[[u8; 4]; 64]>(&self.oam)}
@@ -495,7 +495,13 @@ impl<'a> PPU<'a> {
         self.get_flag_vblank() && self.get_flag_nmi()
     }
 
-    pub fn tick(&mut self) -> bool {
+    pub fn tick(&mut self, bus: &CPUBus) -> bool {
+        let res = self._tick();
+        self.mem.tick(bus);
+        res
+    }
+
+    fn _tick(&mut self) -> bool {
         let cycle = self.cycle;
         if cycle == 0 {
             self.cycle = 1;

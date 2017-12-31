@@ -37,15 +37,15 @@ impl<'a> CPUBus<'a> {
         self.apu = apu;
     }
 
-    #[inline(always)] fn get_cpu(&self) -> &'a mut CPU<'a> {unsafe{&mut *self.cpu}}
-    #[inline(always)] fn get_ppu(&self) -> &'a mut PPU<'a> {unsafe{&mut *self.ppu}}
-    #[inline(always)] fn get_apu(&self) -> &'a mut APU<'a> {unsafe{&mut *self.apu}}
+    #[inline(always)] pub fn get_cpu(&self) -> &'a mut CPU<'a> {unsafe{&mut *self.cpu}}
+    #[inline(always)] pub fn get_ppu(&self) -> &'a mut PPU<'a> {unsafe{&mut *self.ppu}}
+    #[inline(always)] pub fn get_apu(&self) -> &'a mut APU<'a> {unsafe{&mut *self.apu}}
 
     pub fn tick(&self) {
         let cpu = self.get_cpu();
         let ppu = self.get_ppu();
         let apu = self.get_apu();
-        if ppu.tick() || ppu.tick() || ppu.tick() {
+        if ppu.tick(self) || ppu.tick(self) || ppu.tick(self) {
             cpu.trigger_nmi()
         }
         if apu.tick() {
@@ -244,7 +244,12 @@ impl<'a> PPUMemory<'a> {
 
     #[inline(always)]
     fn write_mapper(&self, addr: u16, data: u8) {
-        self.mapper.borrow_mut().write(addr, data);
+        self.mapper.borrow_mut().write(addr, data)
+    }
+
+    #[inline(always)]
+    pub fn tick(&self, bus: &CPUBus) {
+        self.mapper.borrow_mut().tick(bus)
     }
 }
 

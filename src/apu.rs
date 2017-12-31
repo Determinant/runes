@@ -522,7 +522,7 @@ impl<'a> APU<'a> {
             pulse1: Pulse::new(false), pulse2: Pulse::new(true),
             triangle: Triangle::new(),
             noise: Noise::new(),
-            frame_lvl: 0, frame_mode: false, frame_int: false, frame_inh: false,
+            frame_lvl: 0, frame_mode: false, frame_int: false, frame_inh: true,
             cpu_sampler: Sampler::new(mos6502::CPU_FREQ, CPU_SAMPLE_FREQ),
             audio_sampler: Sampler::new(mos6502::CPU_FREQ, AUDIO_SAMPLE_FREQ),
             cycle_even: false,
@@ -584,7 +584,7 @@ impl<'a> APU<'a> {
     }
 
     pub fn write_frame_counter(&mut self, data: u8) {
-        self.frame_inh = data & 0x40 == 1;
+        self.frame_inh = data & 0x40 == 0x40;
         self.frame_mode = data >> 7 == 1;
         if self.frame_mode {
             self.tick_len_swp()

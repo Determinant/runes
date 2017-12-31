@@ -74,12 +74,14 @@ impl Cartridge for SimpleCart {
             BankType::Sram => self.sram.len()
         }
     }
-    fn get_bank(&mut self, base: usize, size: usize, kind: BankType) -> *mut [u8] {
-        &mut (match kind {
-            BankType::PrgRom => &mut self.prg_rom,
-            BankType::ChrRom => &mut self.chr_rom,
-            BankType::Sram => &mut self.sram,
-        })[base..base + size]
+    fn get_bank<'a>(&mut self, base: usize, size: usize, kind: BankType) -> &'a mut [u8] {
+        unsafe {
+            &mut *((&mut (match kind {
+                BankType::PrgRom => &mut self.prg_rom,
+                BankType::ChrRom => &mut self.chr_rom,
+                BankType::Sram => &mut self.sram,
+            })[base..base + size]) as *mut [u8])
+        }
     }
     fn get_mirror_type(&self) -> MirrorType {self.mirror_type}
     fn set_mirror_type(&mut self, mt: MirrorType) {self.mirror_type = mt}
@@ -258,19 +260,19 @@ impl<'a> sdl2::audio::AudioCallback for SDLAudioPlayback<'a> {
         {
             let b = &mut m.0;
             let l1 = (b.tail + b.buffer.len() - b.head) % b.buffer.len();
-            print!("{} ", l1);
+            //print!("{} ", l1);
             
             for x in out.iter_mut() {
                 *x = b.deque()
             }
         }
-        println!("{}", m.1);
+        //println!("{}", m.1);
         if m.1 >= AUDIO_SAMPLES {
             m.1 -= AUDIO_SAMPLES;
             self.0.time_barrier.notify_one();
         } else {
             m.1 = 0;
-            println!("audio frame skipping");
+            //println!("audio frame skipping");
         }
     }
 }
@@ -393,6 +395,7 @@ fn main() {
     let mut m: Box<mapper::Mapper> = match mapper_id {
         0 | 2 => Box::new(mapper::Mapper2::new(cart)),
         1 => Box::new(mapper::Mapper1::new(cart)),
+        4 => Box::new(mapper::Mapper4::new(cart)),
         _ => panic!("unsupported mapper {}", mapper_id)
     };
 
