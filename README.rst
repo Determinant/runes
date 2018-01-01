@@ -13,7 +13,7 @@ accurate (cycle-level accurate), light-weight and efficient emulation
 core library using Rust. Unlike sprocketnes_ or pinky_, RuNES strives to
 provide with a clean and minimal core library without standard library (i.e.,
 without Box, Rc, Vectors, etc.) that could be compiled and easily ported to
-embedded environments. Of course, a simple SDL-based GUI is also provided as a
+embedded environments. Of course, a minimal SDL-based GUI is also provided as a
 demonstration of use.
 
 Feature
@@ -38,10 +38,9 @@ Guidelines
 .. _sprocketnes: https://github.com/pcwalton/sprocketnes
 .. _pinky: https://github.com/koute/pinky
 
-Build
-=====
+Build the Example Emulator
+==========================
 
 ::
 
-    cargo build --release               # build the library only (no std dep)
-    cargo build --examples --release    # or build the example emulator (requires std)
+    cargo build --examples --release    # (requires std, sdl2 and clap)
