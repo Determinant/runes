@@ -565,8 +565,12 @@ impl DMC {
                 self.cur_addr = 0x8000
             }
             self.rem_len -= 1;
-            if self.rem_len == 0 && self.dmc_loop {
-                self.restart()
+            if self.rem_len == 0 {
+                if self.dmc_loop {
+                    self.restart()
+                } else if self.irq_enabled {
+                    cpu.trigger_irq()
+                }
             }
         }
     }

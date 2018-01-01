@@ -13,6 +13,7 @@ extern crate sdl2;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use sdl2::rect::Rect;
 use clap::{Arg, App};
 
 mod memory;
@@ -95,6 +96,7 @@ struct SDLWindow<'a> {
     p1_button_state: u8,
     p1_ctl: &'a stdctl::Joystick,
     p1_keymap: [u8; 256],
+    copy_area: Option<Rect>,
 }
 
 macro_rules! gen_keymap {
@@ -106,11 +108,18 @@ macro_rules! gen_keymap {
 impl<'a> SDLWindow<'a> {
     fn new(sdl_context: &'a sdl2::Sdl,
            p1_ctl: &'a stdctl::Joystick,
-           pixel_scale: u32) -> Self {
+           pixel_scale: u32,
+           full_screen: bool) -> Self {
         use Keycode::*;
         let video_subsystem = sdl_context.video().unwrap();
-        let window = video_subsystem.window("RuNES", PIX_WIDTH * pixel_scale,
-                                                    PIX_HEIGHT * pixel_scale)
+        let mut actual_height = PIX_HEIGHT * pixel_scale;
+        let actual_width = PIX_WIDTH * pixel_scale;
+        let mut copy_area = None;
+        if !full_screen {
+            actual_height -= 16 * pixel_scale;
+            copy_area = Some(Rect::new(0, 8, PIX_WIDTH, PIX_HEIGHT - 16));
+        }
+        let window = video_subsystem.window("RuNES", actual_width, actual_height)
                                     .position_centered()
                                     .opengl()
                                     .build()
@@ -132,6 +141,7 @@ impl<'a> SDLWindow<'a> {
                         PIX_WIDTH, PIX_HEIGHT).unwrap(),
             p1_button_state: 0,
             p1_ctl, p1_keymap: [stdctl::NULL; 256],
+            copy_area
         };
         {
             let keymap = &mut res.p1_keymap;
@@ -199,7 +209,7 @@ impl<'a> ppu::Screen for SDLWindow<'a> {
 
     fn frame(&mut self) {
         self.canvas.clear();
-        self.canvas.copy(&self.texture, None, None).unwrap();
+        self.canvas.copy(&self.texture, self.copy_area, None).unwrap();
         self.canvas.present();
         if self.poll() {std::process::exit(0);}
     }
@@ -329,6 +339,11 @@ fn main() {
                          .long("scale")
                          .required(false)
                          .takes_value(true))
+                    .arg(Arg::with_name("full")
+                         .short("f")
+                         .long("full")
+                         .required(false)
+                         .takes_value(false))
                     .arg(Arg::with_name("INPUT")
                          .help("the iNES ROM file")
                          .required(true)
@@ -337,6 +352,7 @@ fn main() {
     let scale = std::cmp::min(8,
                     std::cmp::max(1,
                         value_t!(matches, "scale", u32).unwrap_or(4)));
+    let full = matches.is_present("full");
     let fname = matches.value_of("INPUT").unwrap();
     let mut file = File::open(fname).unwrap();
     let mut rheader = [0; 16];
@@ -391,7 +407,7 @@ fn main() {
 
     let p1ctl = stdctl::Joystick::new();
     let cart = SimpleCart::new(chr_rom, prg_rom, sram, mirror);
-    let mut win = Box::new(SDLWindow::new(&sdl_context, &p1ctl, scale));
+    let mut win = Box::new(SDLWindow::new(&sdl_context, &p1ctl, scale, full));
     let mut m: Box<mapper::Mapper> = match mapper_id {
         0 | 2 => Box::new(mapper::Mapper2::new(cart)),
         1 => Box::new(mapper::Mapper1::new(cart)),
