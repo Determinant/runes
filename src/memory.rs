@@ -45,16 +45,16 @@ impl<'a> CPUBus<'a> {
         let cpu = self.get_cpu();
         let ppu = self.get_ppu();
         let apu = self.get_apu();
-        if ppu.tick(self) || ppu.tick(self) || ppu.tick(self) {
-            cpu.trigger_nmi()
-        }
+        cpu.tick();
         if apu.tick(self) {
             cpu.trigger_irq()
+        }
+        if ppu.tick(self) || ppu.tick(self) || ppu.tick(self) {
+            cpu.trigger_nmi()
         }
         if let (true, _) = self.ppu_sampler.borrow_mut().tick() {
             ppu.scr.frame()
         }
-        cpu.tick();
     }
 }
 

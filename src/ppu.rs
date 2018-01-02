@@ -169,10 +169,12 @@ impl<'a> PPU<'a> {
     pub fn write_oamdma(&mut self, data: u8, cpu: &mut CPU) {
         self.reg = data;
         let mut addr = (data as u16) << 8;
-        cpu.cycle += 1;
-        cpu.cycle += cpu.cycle & 1;
-        cpu.cycle += 512;
+        let cycle = 1 + (cpu.cycle & 1) + 256;
+        cpu.cycle += cycle;
         let mut oamaddr = self.oamaddr;
+        for _ in 0..cycle - 0x100 {
+            cpu.mem.bus.tick()
+        }
         {
             let oam_raw = self.get_oam_raw_mut();
             for _ in 0..0x100 {

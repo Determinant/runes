@@ -2,11 +2,57 @@
 use mos6502::{CPU_FREQ, CPU};
 use memory::CPUBus;
 
-pub trait Speaker {
-    fn queue(&mut self, sample: u16);
+struct LPFilter {
+    prev_out: i16
 }
 
-const CPU_SAMPLE_FREQ: u32 = 240;
+const AUDIO_LEVEL_MAX: i32 = 65536;
+const LP_FACTOR: i32 = (0.815686 * AUDIO_LEVEL_MAX as f32) as i32;
+const HP_FACTOR1: i32 = (0.996039 * AUDIO_LEVEL_MAX as f32) as i32;
+const HP_FACTOR2: i32 = (0.999835 * AUDIO_LEVEL_MAX as f32) as i32;
+
+impl LPFilter {
+    fn new() -> Self {
+        LPFilter { prev_out: 0 }
+    }
+
+    fn output(&mut self, input: i16) -> i16 {
+        let out = ((input as i32 - self.prev_out as i32)
+                        * LP_FACTOR / AUDIO_LEVEL_MAX) as i16;
+        self.prev_out = out;
+        out
+    }
+}
+
+struct HPFilter {
+    prev_in: i16,
+    prev_out: i16,
+    hp_factor: i32
+}
+
+impl HPFilter {
+    fn new(hp_factor: i32) -> Self {
+        HPFilter {
+            prev_in: 0,
+            prev_out: 0,
+            hp_factor
+        }
+    }
+
+    fn output(&mut self, input: i16) -> i16 {
+        let out = (self.prev_out as i32 * self.hp_factor / AUDIO_LEVEL_MAX +
+                    input as i32 - self.prev_in as i32) as i16;
+        self.prev_in = input;
+        self.prev_out = out;
+        out
+    }
+}
+
+pub trait Speaker {
+    fn queue(&mut self, sample: i16);
+}
+
+const QUARTER_FRAME_FREQ: u32 = 240;
 pub const AUDIO_SAMPLE_FREQ: u32 = 44100;
 
 const TRI_SEQ_TABLE: [u8; 32] = [
@@ -192,7 +238,7 @@ impl Pulse {
         let p = (self.timer_period & 0x00ff) | ((data as u16 & 7) << 8);
         self.set_timer_period(p);
         self.seq_cnt = 0;
-        self.env_start = true;
+        self.decay_lvl = 0xf;
     }
 
     pub fn output(&self) -> u8 {
@@ -337,7 +383,9 @@ impl Triangle {
     }
 
     pub fn output(&self) -> u8 {
-        if self.enabled { TRI_SEQ_TABLE[self.seq_cnt as usize] } else { 0 }
+        if self.enabled && self.timer_period >= 2 {
+            TRI_SEQ_TABLE[self.seq_cnt as usize]
+        } else { 0 }
     }
 
     fn tick_counter(&mut self) {
@@ -437,7 +485,7 @@ impl Noise {
 
     pub fn write_reg4(&mut self, data: u8) {
         self.set_len(data >> 3);
-        self.env_start = true;
+        self.decay_lvl = 0xf;
     }
 
     pub fn output(&self) -> u8 {
@@ -632,10 +680,13 @@ pub struct APU<'a> {
     frame_mode: bool, /* true for 5-step mode */
     frame_inh: bool,
     frame_int: bool,
-    cpu_sampler: Sampler,
+    frame_sampler: Sampler,
     audio_sampler: Sampler,
     cycle_even: bool,
     spkr: &'a mut Speaker,
+    lp_filter: LPFilter,
+    hp_filter1: HPFilter,
+    hp_filter2: HPFilter
 }
 
 impl<'a> APU<'a> {
@@ -646,16 +697,19 @@ impl<'a> APU<'a> {
             noise: Noise::new(),
             dmc: DMC::new(),
             frame_lvl: 0, frame_mode: false, frame_int: false, frame_inh: true,
-            cpu_sampler: Sampler::new(CPU_FREQ, CPU_SAMPLE_FREQ),
+            frame_sampler: Sampler::new(CPU_FREQ, QUARTER_FRAME_FREQ),
             audio_sampler: Sampler::new(CPU_FREQ, AUDIO_SAMPLE_FREQ),
             cycle_even: false,
-            spkr
+            spkr,
+            lp_filter: LPFilter::new(),
+            hp_filter1: HPFilter::new(HP_FACTOR1),
+            hp_filter2: HPFilter::new(HP_FACTOR2)
         }
     }
 
     pub fn tick(&mut self, bus: &CPUBus) -> bool {
         let mut irq = false;
-        if let (true, _) = self.cpu_sampler.tick() {
+        if let (true, _) = self.frame_sampler.tick() {
             irq = self.tick_frame_counter();
         }
         if let (true, _) = self.audio_sampler.tick() {
@@ -667,13 +721,16 @@ impl<'a> APU<'a> {
         irq
     }
 
-    pub fn output(&self) -> u16 {
+    pub fn output(&mut self) -> i16 {
         let pulse_out = PULSE_TABLE[(self.pulse1.output() +
                                     self.pulse2.output()) as usize];
         let tnd_out = TND_TABLE[(self.triangle.output() * 3 +
                                 self.noise.output() * 2 +
                                 self.dmc.output()) as usize];
-        pulse_out + tnd_out
+        self.lp_filter.output(
+            self.hp_filter2.output(
+                self.hp_filter1.output(
+                    (pulse_out + tnd_out).wrapping_sub(0x8000) as i16)))
     }
 
     pub fn read_status(&mut self) -> u8 {
@@ -716,7 +773,8 @@ impl<'a> APU<'a> {
         self.frame_inh = data & 0x40 == 0x40;
         self.frame_mode = data >> 7 == 1;
         if self.frame_mode {
-            self.tick_len_swp()
+            self.tick_env_cnt();
+            self.tick_len_swp();
         }
     }
 
@@ -747,11 +805,21 @@ impl<'a> APU<'a> {
     }
 
     fn tick_frame_counter(&mut self) -> bool {
+        /*
+        println!("{} {} {} {} {} {} {} {} {} {} {} {}",
+                 self.pulse1.output(), self.pulse2.output(),
+                 self.pulse1.seq_wave, self.pulse2.seq_wave,
+                 self.pulse1.timer_period, self.pulse2.timer_period,
+                 self.pulse1.timer_lvl, self.pulse2.timer_lvl,
+                 self.pulse1.env_period, self.pulse2.env_period,
+                 self.pulse1.env_lvl, self.pulse2.env_lvl
+                 );
+                 */
         let f = self.frame_lvl;
         match self.frame_mode {
             false => {
                 self.frame_lvl = if f == 3 { 0 } else { f + 1 };
-                match f {
+                match self.frame_lvl {
                     1 | 3 => self.tick_env_cnt(),
                     2 => {
                         self.tick_env_cnt();
@@ -768,13 +836,13 @@ impl<'a> APU<'a> {
             },
             true => {
                 self.frame_lvl = if f == 4 { 0 } else { f + 1 };
-                match f {
+                match self.frame_lvl {
                     1 | 3 => self.tick_env_cnt(),
                     0 | 2 => {
                         self.tick_env_cnt();
                         self.tick_len_swp();
                     },
-                    _ => self.tick_env_cnt()
+                    _ => ()
                 }
             }
         }

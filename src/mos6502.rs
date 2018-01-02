@@ -602,7 +602,7 @@ pub struct CPU<'a> {
     ea: u16,    /* effective address */
     imm_val: u8,
     pub cycle: u32,
-    pub elapsed: u32,
+    //pub elapsed: u32,
     int: Option<IntType>,
     pub mem: CPUMemory<'a>,
     //sec_callback: &'a mut FnMut(),
@@ -655,7 +655,7 @@ impl<'a> CPU<'a> {
             opr: 0, ea: 0, imm_val: 0,
             int: None,
             acc: false,
-            mem, elapsed: 0/*, sec_callback*/}
+            mem, /*elapsed: 0, sec_callback*/}
     }
 
     pub fn powerup(&mut self) {

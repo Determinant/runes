@@ -288,11 +288,11 @@ impl<'a> sdl2::audio::AudioCallback for SDLAudioPlayback<'a> {
 }
 
 impl<'a> apu::Speaker for SDLAudio<'a> {
-    fn queue(&mut self, sample: u16) {
+    fn queue(&mut self, sample: i16) {
         let mut m = self.0.buffer.lock().unwrap();
         {
             let b = &mut m.0;
-            b.enque(sample.wrapping_sub(1 << 15) as i16);
+            b.enque(sample);
         }
         m.1 += 1;
         while m.1 >= AUDIO_ALL_SAMPLES {
@@ -331,7 +331,7 @@ fn print_cpu_trace(cpu: &CPU) {
 
 fn main() {
     let matches = App::new("RuNES")
-                    .version("0.1.2")
+                    .version("0.1.4")
                     .author("Ted Yin <tederminant@gmail.com>")
                     .about("A Rust NES emulator")
                     .arg(Arg::with_name("scale")
@@ -426,7 +426,7 @@ fn main() {
     loop {
         /* consume the leftover cycles from the last instruction */
         while cpu.cycle > 0 {
-            cpu.mem.bus.tick()
+            cpu.mem.bus.tick();
         }
         //print_cpu_trace(&cpu);
         cpu.step();
