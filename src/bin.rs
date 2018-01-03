@@ -269,8 +269,8 @@ impl<'a> sdl2::audio::AudioCallback for SDLAudioPlayback<'a> {
         let mut m = self.0.buffer.lock().unwrap();
         {
             let b = &mut m.0;
-            let l1 = (b.tail + b.buffer.len() - b.head) % b.buffer.len();
-            //print!("{} ", l1);
+            /*let l1 = (b.tail + b.buffer.len() - b.head) % b.buffer.len();
+            print!("{} ", l1); */
             
             for x in out.iter_mut() {
                 *x = b.deque()
@@ -282,7 +282,7 @@ impl<'a> sdl2::audio::AudioCallback for SDLAudioPlayback<'a> {
             self.0.time_barrier.notify_one();
         } else {
             m.1 = 0;
-            //println!("audio frame skipping");
+            println!("audio frame skipping");
         }
     }
 }
@@ -326,12 +326,13 @@ fn print_cpu_trace(cpu: &CPU) {
     }
     println!("0x{:04x} {} a:{:02x} x:{:02x} y:{:02x} s: {:02x} sp: {:02x}",
              pc, disasm::parse(opcode as u8, &code[1..]),
-             cpu.get_a(), cpu.get_x(), cpu.get_y(), cpu.get_status(), cpu.get_sp());
+             cpu.get_a(), cpu.get_x(), cpu.get_y(),
+             cpu.get_status(), cpu.get_sp());
 }
 
 fn main() {
     let matches = App::new("RuNES")
-                    .version("0.1.4")
+                    .version("0.1.5")
                     .author("Ted Yin <tederminant@gmail.com>")
                     .about("A Rust NES emulator")
                     .arg(Arg::with_name("scale")
@@ -349,10 +350,13 @@ fn main() {
                          .required(true)
                          .index(1))
                     .get_matches();
+
     let scale = std::cmp::min(8,
                     std::cmp::max(1,
-                        value_t!(matches, "scale", u32).unwrap_or(4)));
+                        value_t!(matches, "scale", u32).unwrap_or(3)));
     let full = matches.is_present("full");
+
+    /* load and parse iNES file */
     let fname = matches.value_of("INPUT").unwrap();
     let mut file = File::open(fname).unwrap();
     let mut rheader = [0; 16];
@@ -383,6 +387,7 @@ fn main() {
     if chr_len == 0 {
         chr_len = 0x2000;
     }
+
     let mut prg_rom = vec![0; prg_len];
     let mut chr_rom = vec![0; chr_len];
     let sram = vec![0; 0x4000];
@@ -404,8 +409,9 @@ fn main() {
     let device = audio_subsystem.open_playback(None, &desired_spec, |_| {
         SDLAudioPlayback(&audio_sync)
     }).unwrap();
-
+    /* P1 controller */
     let p1ctl = stdctl::Joystick::new();
+    /* cartridge & mapper */
     let cart = SimpleCart::new(chr_rom, prg_rom, sram, mirror);
     let mut win = Box::new(SDLWindow::new(&sdl_context, &p1ctl, scale, full));
     let mut m: Box<mapper::Mapper> = match mapper_id {
@@ -416,7 +422,7 @@ fn main() {
     };
 
     let mapper = RefCell::new(&mut (*m) as &mut mapper::Mapper);
-    let mut cpu = CPU::new(CPUMemory::new(&mapper, Some(&p1ctl), None)/*, &mut f*/);
+    let mut cpu = CPU::new(CPUMemory::new(&mapper, Some(&p1ctl), None));
     let mut ppu = PPU::new(PPUMemory::new(&mapper), &mut (*win));
     let mut apu = APU::new(&mut spkr);
     let cpu_ptr = &mut cpu as *mut CPU;
@@ -426,7 +432,7 @@ fn main() {
     loop {
         /* consume the leftover cycles from the last instruction */
         while cpu.cycle > 0 {
-            cpu.mem.bus.tick();
+            cpu.mem.bus.tick()
         }
         //print_cpu_trace(&cpu);
         cpu.step();

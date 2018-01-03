@@ -1,15 +1,24 @@
 #![allow(dead_code)]
-use mos6502::{CPU_FREQ, CPU};
+use mos6502::CPU_FREQ;
 use memory::CPUBus;
 
 struct LPFilter {
     prev_out: i16
 }
 
-const AUDIO_LEVEL_MAX: i32 = 65536;
+const AUDIO_LEVEL_MAX: i32 = 32768;
 const LP_FACTOR: i32 = (0.815686 * AUDIO_LEVEL_MAX as f32) as i32;
 const HP_FACTOR1: i32 = (0.996039 * AUDIO_LEVEL_MAX as f32) as i32;
 const HP_FACTOR2: i32 = (0.999835 * AUDIO_LEVEL_MAX as f32) as i32;
+
+fn cutoff(mut x: i32) -> i16 {
+    if x < -32768 {
+        x = -32768
+    } else if x > 32767 {
+        x = 32767
+    }
+    x as i16
+}
 
 impl LPFilter {
     fn new() -> Self {
@@ -17,8 +26,8 @@ impl LPFilter {
     }
 
     fn output(&mut self, input: i16) -> i16 {
-        let out = ((input as i32 - self.prev_out as i32)
-                        * LP_FACTOR / AUDIO_LEVEL_MAX) as i16;
+        let out = cutoff((input as i32 - self.prev_out as i32)
+                        * LP_FACTOR / AUDIO_LEVEL_MAX);
         self.prev_out = out;
         out
     }
@@ -40,8 +49,9 @@ impl HPFilter {
     }
 
     fn output(&mut self, input: i16) -> i16 {
-        let out = (self.prev_out as i32 * self.hp_factor / AUDIO_LEVEL_MAX +
-                    input as i32 - self.prev_in as i32) as i16;
+        let out = cutoff(
+            self.prev_out as i32 * self.hp_factor / AUDIO_LEVEL_MAX +
+            input as i32 - self.prev_in as i32);
         self.prev_in = input;
         self.prev_out = out;
         out
@@ -603,10 +613,10 @@ impl DMC {
         self.rem_len = self.sample_len;
     }
 
-    fn try_refill(&mut self, cpu: &mut CPU) {
+    fn try_refill(&mut self, bus: &CPUBus) {
         if self.rem_len > 0 && self.dmc_cnt == 0 {
-            cpu.cycle += 4;
-            self.shift_reg = cpu.mem.read_without_tick(self.cur_addr);
+            bus.cpu_stall(4);
+            self.shift_reg = bus.get_cpu().mem.read_without_tick(self.cur_addr);
             self.dmc_cnt = 8;
             self.cur_addr = self.cur_addr.wrapping_add(1);
             if self.cur_addr == 0x0 {
@@ -617,7 +627,7 @@ impl DMC {
                 if self.dmc_loop {
                     self.restart()
                 } else if self.irq_enabled {
-                    cpu.trigger_irq()
+                    bus.get_cpu().trigger_irq()
                 }
             }
         }
@@ -638,9 +648,9 @@ impl DMC {
         self.dmc_cnt -= 1;
     }
 
-    fn tick_timer(&mut self, cpu: &mut CPU) {
+    fn tick_timer(&mut self, bus: &CPUBus) {
         if !self.enabled { return }
-        self.try_refill(cpu);
+        self.try_refill(bus);
         if self.timer_lvl == 0 {
             self.timer_lvl = self.timer_period;
             self.shift();
@@ -716,7 +726,7 @@ impl<'a> APU<'a> {
             let sample = self.output();
             self.spkr.queue(sample);
         }
-        self.tick_timer(bus.get_cpu());
+        self.tick_timer(bus);
         self.cycle_even = !self.cycle_even;
         irq
     }
@@ -727,6 +737,7 @@ impl<'a> APU<'a> {
         let tnd_out = TND_TABLE[(self.triangle.output() * 3 +
                                 self.noise.output() * 2 +
                                 self.dmc.output()) as usize];
+        //(pulse_out + tnd_out).wrapping_sub(0x8000) as i16
         self.lp_filter.output(
             self.hp_filter2.output(
                 self.hp_filter1.output(
@@ -778,12 +789,12 @@ impl<'a> APU<'a> {
         }
     }
 
-    fn tick_timer(&mut self, cpu: &mut CPU) {
+    fn tick_timer(&mut self, bus: &CPUBus) {
         if self.cycle_even {
             self.pulse1.tick_timer();
             self.pulse2.tick_timer();
             self.noise.tick_timer();
-            self.dmc.tick_timer(cpu);
+            self.dmc.tick_timer(bus);
         }
         self.triangle.tick_timer();
     }

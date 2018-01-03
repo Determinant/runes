@@ -5,7 +5,7 @@ use mos6502::{CPU, CPU_FREQ};
 use cartridge::MirrorType;
 use mapper::Mapper;
 use controller::Controller;
-use core::cell::RefCell;
+use core::cell::{RefCell, Cell};
 use core::ptr::null_mut;
 
 pub trait VMem {
@@ -18,6 +18,8 @@ pub struct CPUBus<'a> {
     ppu: *mut PPU<'a>,
     apu: *mut APU<'a>,
     ppu_sampler: RefCell<Sampler>,
+    nmi_after_tick: Cell<bool>,
+    cpu_stall: Cell<u32>
 }
 
 impl<'a> CPUBus<'a> {
@@ -26,6 +28,8 @@ impl<'a> CPUBus<'a> {
                 cpu: null_mut(),
                 apu: null_mut(),
                 ppu_sampler: RefCell::new(Sampler::new(CPU_FREQ, 60)),
+                nmi_after_tick: Cell::new(false),
+                cpu_stall: Cell::new(0)
             }
     }
 
@@ -41,17 +45,41 @@ impl<'a> CPUBus<'a> {
     #[inline(always)] pub fn get_ppu(&self) -> &'a mut PPU<'a> {unsafe{&mut *self.ppu}}
     #[inline(always)] pub fn get_apu(&self) -> &'a mut APU<'a> {unsafe{&mut *self.apu}}
 
+    pub fn cpu_stall(&self, delta: u32) {
+        self.cpu_stall.set(self.cpu_stall.get() + delta)
+    }
+
     pub fn tick(&self) {
         let cpu = self.get_cpu();
         let ppu = self.get_ppu();
         let apu = self.get_apu();
-        cpu.tick();
+
+        let cpu_stall = self.cpu_stall.get();
+        if cpu_stall == 0 {
+            cpu.tick()
+        } else {
+            self.cpu_stall.set(cpu_stall - 1)
+        }
         if apu.tick(self) {
             cpu.trigger_irq()
         }
-        if ppu.tick(self) || ppu.tick(self) || ppu.tick(self) {
-            cpu.trigger_nmi()
+
+        let first = ppu.tick(self);
+        let second = ppu.tick(self);
+        let third = ppu.tick(self);
+        let mut nmi_after_tick = false;
+
+        if first || second || third {
+            nmi_after_tick = !first;
+            if cpu.cycle == 0 && nmi_after_tick {
+                cpu.trigger_delayed_nmi()
+            } else {
+                cpu.trigger_nmi()
+            }
+            //println!("nmi");
         }
+        self.nmi_after_tick.set(nmi_after_tick);
+        //println!("tick {} {}", ppu.scanline, ppu.cycle);
         if let (true, _) = self.ppu_sampler.borrow_mut().tick() {
             ppu.scr.frame()
         }
@@ -88,7 +116,12 @@ impl<'a> CPUMemory<'a> {
             self.sram[(addr & 0x07ff) as usize]
         } else if addr < 0x4000 {
             match addr & 0x7 {
-                0x2 => ppu.read_status(cpu),
+                0x2 => {
+                    if ppu.cycle == 2 || ppu.cycle == 3 {
+                        cpu.suppress_nmi()
+                    } /* race condition when status is read near vbl/nmi */
+                    ppu.read_status()
+                },
                 0x4 => ppu.read_oamdata(),
                 0x7 => ppu.read_data(),
                 _ => 0
@@ -119,7 +152,10 @@ impl<'a> CPUMemory<'a> {
                 0x0 => {
                     let old = ppu.get_flag_nmi();
                     ppu.write_ctl(data);
-                    if !old && ppu.try_nmi() && ppu.vblank {
+                    if !ppu.try_nmi() && self.bus.nmi_after_tick.get() {
+                        cpu.suppress_nmi()
+                    } /* NMI could be suppressed if disabled near set */
+                    if !old && ppu.try_nmi() && ppu.vblank_lines {
                         cpu.trigger_delayed_nmi()
                     } /* toggle NMI flag can generate multiple ints */
                 },
@@ -155,7 +191,7 @@ impl<'a> CPUMemory<'a> {
                 0x4013 => apu.dmc.write_reg4(data),
                 0x4015 => apu.write_status(data),
                 0x4017 => apu.write_frame_counter(data),
-                0x4014 => ppu.write_oamdma(data, cpu),
+                0x4014 => ppu.write_oamdma(data, &self.bus),
                 0x4016 => {
                     if let Some(c) = self.ctl1 { c.write(data) }
                     if let Some(c) = self.ctl2 { c.write(data) }

@@ -605,7 +605,6 @@ pub struct CPU<'a> {
     //pub elapsed: u32,
     int: Option<IntType>,
     pub mem: CPUMemory<'a>,
-    //sec_callback: &'a mut FnMut(),
 }
 
 macro_rules! make_int {
@@ -639,8 +638,7 @@ impl<'a> CPU<'a> {
     #[inline(always)] pub fn get_over(&self) -> u8 { (self.status >> 6) & 1 }
     #[inline(always)] pub fn get_neg(&self) -> u8 { (self.status >> 7) & 1 }
 
-    pub fn new(mem: CPUMemory<'a>/*,
-               sec_callback: &'a mut FnMut()*/) -> Self {
+    pub fn new(mem: CPUMemory<'a>) -> Self {
         let pc = 0;
         /* nes power up state */
         let a = 0;
@@ -650,12 +648,14 @@ impl<'a> CPU<'a> {
         let status = 0x34;
         let cycle = 0;
 
-        CPU{a, x, y,
+        CPU {a, x, y,
             pc, sp, status, cycle,
             opr: 0, ea: 0, imm_val: 0,
             int: None,
             acc: false,
-            mem, /*elapsed: 0, sec_callback*/}
+            mem,
+            //elapsed: 0
+        }
     }
 
     pub fn powerup(&mut self) {
@@ -667,7 +667,6 @@ impl<'a> CPU<'a> {
     make_int!(irq, IRQ_VECTOR);
 
     pub fn step(&mut self) {
-        //let cycle0 = self.cycle;
         if self.int.is_some() {
             match self.int {
                 Some(IntType::NMI) => {self.nmi(); self.int = None; return},
@@ -676,7 +675,7 @@ impl<'a> CPU<'a> {
                 _ => ()
             }
         }
-        self.cycle += 1;
+        self.cycle += 0xff;
         let pc = self.pc;
         let opcode = self.mem.read(pc) as usize;
         /* update opr pointing to operands of current inst */
@@ -685,7 +684,8 @@ impl<'a> CPU<'a> {
         self.pc = pc.wrapping_add(INST_LENGTH[opcode] as u16);
         /* get effective address based on addressing mode */
         self.acc = false;
-        self.cycle += INST_CYCLE[opcode] as u32 - 1;
+        self.cycle += INST_CYCLE[opcode] as u32;
+        self.cycle -= 0xff;
         self.cycle += (addr::ADDR_MODES[opcode](self) * INST_EXTRA_CYCLE[opcode]) as u32;
         /* execute the inst */
         ops::OPS[opcode](self);
@@ -694,13 +694,7 @@ impl<'a> CPU<'a> {
 
     pub fn tick(&mut self) {
         self.cycle -= 1;
-        /*
-        self.elapsed += 1;
-        if self.elapsed == CPU_FREQ {
-            self.elapsed = 0;
-            (self.sec_callback)();
-        }
-        */
+        //self.elapsed += 1;
     }
 
     pub fn reset(&mut self) {

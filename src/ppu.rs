@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 use memory::{VMem, PPUMemory, CPUBus};
-use mos6502::CPU;
 use core::intrinsics::transmute;
 
 pub trait Screen {
@@ -48,12 +47,14 @@ pub struct PPU<'a> {
     sp_pixel: [u32; 8],
     sp_idx: [usize; 8],
     sp_cnt: [u8; 8],
-    pub vblank: bool,
+    vblank: bool,
+    pub vblank_lines: bool,
     buffered_read: u8,
     early_read: bool,
     /* IO */
     mem: PPUMemory<'a>,
     pub scr: &'a mut Screen,
+    //pub elapsed: u32,
 }
 
 impl<'a> PPU<'a> {
@@ -71,16 +72,12 @@ impl<'a> PPU<'a> {
     }
 
     #[inline]
-    pub fn read_status(&mut self, cpu: &mut CPU) -> u8 {
+    pub fn read_status(&mut self) -> u8 {
         let res = (self.ppustatus & !0x1fu8) | (self.reg & 0x1f);
         self.ppustatus &= !PPU::FLAG_VBLANK;
         self.w = false;
-        if self.scanline == 241 {
-            match self.cycle {
-                1 => self.early_read = true, /* read before cycle 1 */
-                2 | 3 => cpu.suppress_nmi(),
-                _ => ()
-            }
+        if self.scanline == 241 && self.cycle == 1 {
+            self.early_read = true /* read before cycle 1 */
         }
         res
     }
@@ -166,19 +163,20 @@ impl<'a> PPU<'a> {
     }
 
     #[inline]
-    pub fn write_oamdma(&mut self, data: u8, cpu: &mut CPU) {
+    pub fn write_oamdma(&mut self, data: u8, bus: &CPUBus) {
+        let cpu = bus.get_cpu();
         self.reg = data;
         let mut addr = (data as u16) << 8;
-        let cycle = 1 + (cpu.cycle & 1) + 256;
-        cpu.cycle += cycle;
+        let stall = 1 + (cpu.cycle & 1) + 512;
+        bus.cpu_stall(stall);
         let mut oamaddr = self.oamaddr;
-        for _ in 0..cycle - 0x100 {
+        for _ in 0..stall - 0x100 {
             cpu.mem.bus.tick()
         }
         {
             let oam_raw = self.get_oam_raw_mut();
             for _ in 0..0x100 {
-                oam_raw[oamaddr as usize] = cpu.mem.read(addr);
+                oam_raw[oamaddr as usize] = cpu.mem.read_without_tick(addr);
                 addr = addr.wrapping_add(1);
                 oamaddr = oamaddr.wrapping_add(1);
             }
@@ -457,8 +455,8 @@ impl<'a> PPU<'a> {
         let ppustatus = 0xa0;
         let oamaddr = 0x00;
         let buffered_read = 0x00;
-        let cycle = 340;
-        let scanline = 240;
+        let cycle = 0;
+        let scanline = 241;
         PPU {
             scanline,
             ppuctl,
@@ -476,9 +474,11 @@ impl<'a> PPU<'a> {
             sp_pixel: [0; 8],
             sp_cnt: [0; 8],
             vblank: false,
+            vblank_lines: true,
             buffered_read,
             early_read: false,
-            mem, scr
+            mem, scr,
+            //elapsed: 0,
         }
     }
 
@@ -488,8 +488,9 @@ impl<'a> PPU<'a> {
         self.ppustatus = self.ppustatus & 0x80;
         self.w = false;
         self.buffered_read = 0x00;
-        self.cycle = 340;
-        self.scanline = 240;
+        self.cycle = 0;
+        self.scanline = 241;
+        self.vblank_lines = true;
     }
 
     #[inline(always)]
@@ -504,6 +505,12 @@ impl<'a> PPU<'a> {
     }
 
     fn _tick(&mut self) -> bool {
+        if self.scanline == 240 {
+            self.vblank_lines = true
+        } else if self.scanline == 261 {
+            self.vblank_lines = false
+        }
+        //self.elapsed += 1;
         let cycle = self.cycle;
         if cycle == 0 {
             self.cycle = 1;
@@ -551,11 +558,11 @@ impl<'a> PPU<'a> {
                     self.cycle = 258;
                     return false
                 }
-                if pre_line && cycle == 339 && self.f {
-                        self.scanline = 0;
-                        self.cycle = 0;
-                        self.f = !self.f;
-                        return false;
+                /* skip at 338 because of 10-even_odd_timing test indicates an undocumented
+                 * behavior of NES */
+                if pre_line && cycle == 338 && self.f {
+                    self.cycle = 340;
+                    return false;
                 }
             }
         } else {
@@ -564,6 +571,8 @@ impl<'a> PPU<'a> {
                 if !self.early_read {
                     self.ppustatus |= PPU::FLAG_VBLANK
                 }
+                //self.elapsed = 0;
+                //println!("vbl");
                 self.early_read = false;
                 self.vblank = true;
                 self.scr.render();
