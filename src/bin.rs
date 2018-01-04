@@ -428,6 +428,7 @@ fn main() {
     let mut apu = APU::new(&mut spkr);
     let cpu_ptr = &mut cpu as *mut CPU;
     cpu.mem.bus.attach(cpu_ptr, &mut ppu, &mut apu);
+    ppu.powerup();
     cpu.powerup();
     device.resume();
     loop {

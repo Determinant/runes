@@ -54,6 +54,8 @@ pub struct PPU<'a> {
     /* IO */
     mem: PPUMemory<'a>,
     pub scr: &'a mut Screen,
+    rendering: bool,
+    cb_matrix: [[fn (&mut PPU<'a>) -> bool; 341]; 262],
     //pub elapsed: u32,
 }
 
@@ -69,6 +71,10 @@ impl<'a> PPU<'a> {
     pub fn write_mask(&mut self, data: u8) {
         self.reg = data;
         self.ppumask = data;
+        self.rendering = self.get_show_bg() || self.get_show_sp();
+        if !self.rendering {
+            self.bg_pixel = 0
+        }
     }
 
     #[inline]
@@ -206,62 +212,267 @@ impl<'a> PPU<'a> {
     const FLAG_SPRITE_ZERO: u8 = 1 << 6;
     const FLAG_VBLANK: u8 = 1 << 7;
     #[inline(always)]
-    fn fetch_nametable_byte(&mut self) {
-        self.bg_nt = self.mem.read_nametable(self.v & 0x0fff);
+    fn fetch_nametable_byte(ppu: &mut PPU) {
+        ppu.bg_nt = ppu.mem.read_nametable(ppu.v & 0x0fff)
     }
 
     #[inline(always)]
-    fn fetch_attrtable_byte(&mut self) {
-        let v = self.v;
+    fn fetch_attrtable_byte(ppu: &mut PPU) {
+        let v = ppu.v;
         /* the byte representing 4x4 tiles */
-        let b = self.mem.read_nametable(0x03c0 | (v & 0x0c00) |
+        let b = ppu.mem.read_nametable(0x03c0 | (v & 0x0c00) |
                             ((v >> 4) & 0x38) | ((v >> 2) & 0x07));
-        self.bg_attr = (b >> ((v & 2) | ((v & 0x40) >> 4))) & 3;
+        ppu.bg_attr = (b >> ((v & 2) | ((v & 0x40) >> 4))) & 3;
     }
 
     #[inline(always)]
-    fn fetch_low_bgtile_byte(&mut self) {
+    fn fetch_low_bgtile_byte(ppu: &mut PPU) {
                                         /* 0x?000 */
-        self.bg_bit_low = self.mem.read_mapper(((self.ppuctl as u16 & 0x10) << 8) |
+        ppu.bg_bit_low = ppu.mem.read_mapper(((ppu.ppuctl as u16 & 0x10) << 8) |
                                         /* 0x-??0 */
-                                        ((self.bg_nt as u16) << 4) |
+                                        ((ppu.bg_nt as u16) << 4) |
                                         /* 0x---? (0 - 7) */
-                                        ((self.v >> 12) & 7) | 0x0);
+                                        ((ppu.v >> 12) & 7) | 0x0)
     }
 
     #[inline(always)]
-    fn fetch_high_bgtile_byte(&mut self) {
+    fn fetch_high_bgtile_byte(ppu: &mut PPU) {
                                         /* 0x?000 */
-        self.bg_bit_high = self.mem.read_mapper(((self.ppuctl as u16 & 0x10) << 8) |
+        ppu.bg_bit_high = ppu.mem.read_mapper(((ppu.ppuctl as u16 & 0x10) << 8) |
                                         /* 0x-??0 */
-                                        ((self.bg_nt as u16) << 4) |
+                                        ((ppu.bg_nt as u16) << 4) |
                                         /* 0x---? (8 - f) */
-                                        ((self.v >> 12) & 7) | 0x8);
+                                        ((ppu.v >> 12) & 7) | 0x8)
     }
 
     #[inline(always)]
-    fn load_bgtile(&mut self) {
+    fn load_bgtile(ppu: &mut PPU) {
         /* load the tile bitmap to high 8 bits of bitmap,
          * assume the high 8 bits are zeros */
-        debug_assert!(self.bg_pixel >> 32 == 0);
+        debug_assert!(ppu.bg_pixel >> 32 == 0);
         let mut t: u64 = 0;
-        let mut bl = self.bg_bit_low;
-        let mut bh = self.bg_bit_high;
+        let mut bl = ppu.bg_bit_low;
+        let mut bh = ppu.bg_bit_high;
         for _ in 0..8 {
-            t = (t << 4) | ((self.bg_attr << 2) | (bl & 1) | ((bh & 1) << 1)) as u64;
+            t = (t << 4) | ((ppu.bg_attr << 2) | (bl & 1) | ((bh & 1) << 1)) as u64;
             bl >>= 1;
             bh >>= 1;
         }
-        self.bg_pixel |= t << 32;
+        ppu.bg_pixel |= t << 32;
+    }
+
+    fn nop(ppu: &mut PPU) -> bool {
+        false
+    }
+
+    fn visible_8_1(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::load_bgtile(ppu);
+            PPU::fetch_nametable_byte(ppu);
+            PPU::shift_bgtile(ppu);
+        }
+        false
+    }
+
+    fn visible_8_3(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::fetch_attrtable_byte(ppu);
+            PPU::shift_bgtile(ppu);
+        }
+        false
+    }
+
+    fn visible_8_5(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::fetch_low_bgtile_byte(ppu);
+            PPU::shift_bgtile(ppu);
+        }
+        false
+    }
+
+    fn visible_8_7(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::fetch_high_bgtile_byte(ppu);
+            PPU::shift_bgtile(ppu);
+        }
+        false
+    }
+
+    fn visible_8_0(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::wrapping_inc_cx(ppu);
+            PPU::shift_bgtile(ppu);
+        }
+        false
+    }
+
+    fn visible_1(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::visible_8_1(ppu);
+            PPU::clear_sprite(ppu);
+        }
+        false
+    }
+
+    fn visible_65(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::visible_8_1(ppu);
+            PPU::eval_sprite(ppu);
+        }
+        false
+    }
+
+    fn visible_256(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::visible_8_0(ppu);
+            PPU::wrapping_inc_y(ppu);
+        }
+        false
+    }
+
+    fn visible_257(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::reset_cx(ppu);
+            PPU::fetch_sprite(ppu);
+        }
+        false
+    }
+
+    fn rendering_8_1(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::load_bgtile(ppu);
+            PPU::fetch_nametable_byte(ppu);
+            PPU::render_pixel(ppu);
+            PPU::shift_sprites(ppu);
+            PPU::shift_bgtile(ppu);
+        }
+        false
+    }
+
+    fn rendering_8_3(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::fetch_attrtable_byte(ppu);
+            PPU::render_pixel(ppu);
+            PPU::shift_sprites(ppu);
+            PPU::shift_bgtile(ppu);
+        }
+        false
+    }
+
+    fn rendering_8_5(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::fetch_low_bgtile_byte(ppu);
+            PPU::render_pixel(ppu);
+            PPU::shift_sprites(ppu);
+            PPU::shift_bgtile(ppu);
+        }
+        false
+    }
+
+    fn rendering_8_7(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::fetch_high_bgtile_byte(ppu);
+            PPU::render_pixel(ppu);
+            PPU::shift_sprites(ppu);
+            PPU::shift_bgtile(ppu);
+        }
+        false
+    }
+
+    fn rendering_8_0(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::wrapping_inc_cx(ppu);
+            PPU::render_pixel(ppu);
+            PPU::shift_sprites(ppu);
+            PPU::shift_bgtile(ppu);
+        }
+        false
+    }
+
+    fn rendering_1(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::rendering_8_1(ppu);
+            PPU::clear_sprite(ppu);
+        }
+        false
+    }
+
+    fn rendering_65(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::rendering_8_1(ppu);
+            PPU::eval_sprite(ppu);
+        }
+        false
+    }
+
+    fn rendering_256(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::rendering_8_0(ppu);
+            PPU::wrapping_inc_y(ppu);
+        }
+        false
+    }
+
+    fn visible_8_other(ppu: &mut PPU) -> bool{
+        if ppu.rendering {
+            PPU::shift_bgtile(ppu)
+        }
+        false
+    }
+
+    fn rendering_8_other(ppu: &mut PPU) -> bool {
+        if ppu.rendering {
+            PPU::render_pixel(ppu);
+            PPU::shift_sprites(ppu);
+            PPU::shift_bgtile(ppu);
+        }
+        false
+    }
+
+    fn skip_cycle(ppu: &mut PPU) -> bool {
+        if ppu.f {
+            ppu.cycle += 1
+        }
+        false
+    }
+
+    fn vblank_cycle(ppu: &mut PPU) -> bool {
+        if !ppu.early_read {
+            ppu.ppustatus |= PPU::FLAG_VBLANK
+        }
+        //self.elapsed = 0;
+        //println!("vbl");
+        ppu.early_read = false;
+        ppu.vblank = true;
+        ppu.scr.render();
+        ppu.try_nmi()
+    }
+
+    fn vblank_clear_cycle(ppu: &mut PPU) -> bool {
+        /* clear vblank, sprite zero hit & overflow */
+        ppu.vblank = false;
+        ppu.ppustatus &= !(PPU::FLAG_VBLANK |
+                            PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
+        ppu.bg_pixel = 0;
+        false
+    }
+    
+    fn zero_cycle(ppu: &mut PPU) -> bool {
+        if ppu.scanline == 240 {
+            ppu.vblank_lines = true
+        } else if ppu.scanline == 261 {
+            ppu.vblank_lines = false
+        }
+        false
     }
 
     #[inline(always)]
-    fn shift_sprites(&mut self) {
-        for (i, c) in self.sp_cnt.iter_mut().enumerate() {
-            if self.sp_idx[i] > 0xff { break }
+    fn shift_sprites(ppu: &mut PPU) {
+        for (i, c) in ppu.sp_cnt.iter_mut().enumerate() {
+            if ppu.sp_idx[i] > 0xff { break }
             let c0 = *c;
             match c0 {
-                0 => self.sp_pixel[i] >>= 4,
+                0 => ppu.sp_pixel[i] >>= 4,
                 _ => *c = c0 - 1
             }
         }
@@ -273,28 +484,28 @@ impl<'a> PPU<'a> {
     }
 
     #[inline(always)]
-    fn wrapping_inc_cx(&mut self) {
-        match self.v & 0x001f {
+    fn wrapping_inc_cx(ppu: &mut PPU) {
+        match ppu.v & 0x001f {
             31 => {
-                self.v &= !0x001fu16; /* reset coarse x */
-                self.v ^= 0x0400;     /* switch horizontal nametable */
+                ppu.v &= !0x001fu16; /* reset coarse x */
+                ppu.v ^= 0x0400;     /* switch horizontal nametable */
             }
-            _ => self.v += 1
+            _ => ppu.v += 1
         }
     }
 
     #[inline(always)]
-    fn wrapping_inc_y(&mut self) {
-        match (self.v & 0x7000) == 0x7000 {
-            false => self.v += 0x1000, /* fine y < 7 */
+    fn wrapping_inc_y(ppu: &mut PPU) {
+        match (ppu.v & 0x7000) == 0x7000 {
+            false => ppu.v += 0x1000, /* fine y < 7 */
             true => {
-                self.v &= !0x7000u16;  /* fine y <- 0 */
-                let y = match (self.v & 0x03e0) >> 5 {
-                        29 => {self.v ^= 0x0800; 0}, /* at bottom of scanline */
+                ppu.v &= !0x7000u16;  /* fine y <- 0 */
+                let y = match (ppu.v & 0x03e0) >> 5 {
+                        29 => {ppu.v ^= 0x0800; 0}, /* at bottom of scanline */
                         31 => 0,                     /* do not switch nt */
                         y => y + 1
                     };
-                self.v = (self.v & !0x03e0u16) | (y << 5);
+                ppu.v = (ppu.v & !0x03e0u16) | (y << 5);
             }
         }
     }
@@ -305,30 +516,36 @@ impl<'a> PPU<'a> {
     }
 
     #[inline(always)]
-    fn reset_y(&mut self) {
-        self.v = (self.v & !0x7be0u16) | (self.t & 0x7be0);
+    fn reset_y(ppu: &mut PPU) {
+        ppu.v = (ppu.v & !0x7be0u16) | (ppu.t & 0x7be0)
+    }
+
+    fn reset_y_cycle(ppu: &mut PPU) -> bool {
+        PPU::reset_y(ppu);
+        false
     }
 
     #[inline(always)]
-    fn clear_sprite(&mut self) {
-        debug_assert!(self.scanline != 261);
-        self.oam2 = [0x100; 8];
+    fn clear_sprite(ppu: &mut PPU) {
+        debug_assert!(ppu.scanline != 261);
+        ppu.oam2 = [0x100; 8];
     }
 
-    fn eval_sprite(&mut self) {
-        debug_assert!(self.scanline != 261);
+    #[inline(always)]
+    fn eval_sprite(ppu: &mut PPU) {
+        debug_assert!(ppu.scanline != 261);
         /* we use scanline here because s.y is the (actual y) - 1 */
         let mut nidx = 0;
         let mut n = 0;
-        let scanline = self.scanline;
-        let h = match self.get_spritesize() {
+        let scanline = ppu.scanline;
+        let h = match ppu.get_spritesize() {
             0 => 8,
             _ => 16
         };
-        for (i, s) in self.oam.iter().enumerate() {
+        for (i, s) in ppu.oam.iter().enumerate() {
             let y = s.y as u16;
             if y <= scanline && scanline < y + h {
-                self.oam2[nidx] = i;
+                ppu.oam2[nidx] = i;
                 nidx += 1;
                 if nidx == 8 {
                     n = i + 1;
@@ -338,9 +555,9 @@ impl<'a> PPU<'a> {
         }
         if nidx == 8 {
             let mut m = 0;
-            let mut ppustatus = self.ppustatus;
+            let mut ppustatus = ppu.ppustatus;
             {
-                let oam_raw = self.get_oam_arr();
+                let oam_raw = ppu.get_oam_arr();
                 while n < 64 {
                     let y = oam_raw[n][m] as u16;
                     if y <= scanline && scanline < y + h {
@@ -351,7 +568,7 @@ impl<'a> PPU<'a> {
                     n += 1;
                 }
             }
-            self.ppustatus = ppustatus;
+            ppu.ppustatus = ppustatus;
         }
     }
 
@@ -404,29 +621,29 @@ impl<'a> PPU<'a> {
         }
     }
 
-    fn render_pixel(&mut self) {
-        let x = self.cycle - 1;
-        let bg = ((self.bg_pixel >> (self.x << 2)) & 0xf) as u16;
+    fn render_pixel(ppu: &mut PPU) {
+        let x = ppu.cycle - 1;
+        let bg = ((ppu.bg_pixel >> (ppu.x << 2)) & 0xf) as u16;
         let bg_pidx =
-            if x >= 8 || self.get_show_leftmost_bg() {
-                if self.get_show_bg() {bg & 3} else {0}
+            if x >= 8 || ppu.get_show_leftmost_bg() {
+                if ppu.get_show_bg() {bg & 3} else {0}
             } else {0};
         let mut sp_pidx = 0x0;
         let mut pri = 0x1;
         let mut sp = 0;
-        let show_sp = self.get_show_sp();
-        if x >= 8 || self.get_show_leftmost_sp() {
+        let show_sp = ppu.get_show_sp();
+        if x >= 8 || ppu.get_show_leftmost_sp() {
             for i in 0..8 {
-                if self.sp_idx[i] > 0xff { break }
-                if self.sp_cnt[i] != 0 { continue; } /* not active */
-                let s = &self.oam[self.sp_idx[i]];
-                sp = if show_sp {(self.sp_pixel[i] & 0xf) as u16} else { 0 };
+                if ppu.sp_idx[i] > 0xff { break }
+                if ppu.sp_cnt[i] != 0 { continue; } /* not active */
+                let s = &ppu.oam[ppu.sp_idx[i]];
+                sp = if show_sp {(ppu.sp_pixel[i] & 0xf) as u16} else { 0 };
                 match sp & 3 {
                     0x0 => (),
                     pidx => {
-                        if bg_pidx != 0 && self.sp_idx[i] == 0 &&
+                        if bg_pidx != 0 && ppu.sp_idx[i] == 0 &&
                            x != 0xff && s.y != 0xff {
-                            self.ppustatus |= PPU::FLAG_SPRITE_ZERO; /* set sprite zero hit */
+                            ppu.ppustatus |= PPU::FLAG_SPRITE_ZERO; /* set sprite zero hit */
                         }
                         sp_pidx = pidx;
                         pri = (s.attr >> 5) & 1;
@@ -435,11 +652,11 @@ impl<'a> PPU<'a> {
                 }
             }
         }
-        debug_assert!(0 < self.cycle && self.cycle < 257);
-        debug_assert!(self.scanline < 240);
-        self.scr.put((self.cycle - 1) as u8,
-                     self.scanline as u8,
-                     self.mem.read_palette(if (pri == 0 || bg_pidx == 0) && sp_pidx != 0 {
+        debug_assert!(0 < ppu.cycle && ppu.cycle < 257);
+        debug_assert!(ppu.scanline < 240);
+        ppu.scr.put((ppu.cycle - 1) as u8,
+                     ppu.scanline as u8,
+                     ppu.mem.read_palette(if (pri == 0 || bg_pidx == 0) && sp_pidx != 0 {
                         0x0010 | sp
                      } else {
                         0x0000 | match bg_pidx {
@@ -478,6 +695,8 @@ impl<'a> PPU<'a> {
             buffered_read,
             early_read: false,
             mem, scr,
+            rendering: false,
+            cb_matrix: [[PPU::nop; 341]; 262]
             //elapsed: 0,
         }
     }
@@ -491,6 +710,7 @@ impl<'a> PPU<'a> {
         self.cycle = 0;
         self.scanline = 241;
         self.vblank_lines = true;
+        self.rendering = false;
     }
 
     #[inline(always)]
@@ -499,96 +719,15 @@ impl<'a> PPU<'a> {
     }
 
     pub fn tick(&mut self, bus: &CPUBus) -> bool {
-        let res = self._tick();
+        let scanline = self.scanline as usize;
+        let cycle = self.cycle as usize;
+        let res = self.cb_matrix[scanline][cycle](self);
+        self.tick_x_y();
         self.mem.tick(bus);
         res
     }
 
-    fn _tick(&mut self) -> bool {
-        //self.elapsed += 1;
-        let cycle = self.cycle;
-        if cycle == 0 {
-            self.cycle = 1;
-            if self.scanline == 240 {
-                self.vblank_lines = true
-            } else if self.scanline == 261 {
-                self.vblank_lines = false
-            }
-            return false;
-        }
-        let rendering = self.get_show_bg() || self.get_show_sp();
-        let visible_line = self.scanline < 240;
-        let pre_line = self.scanline == 261;
-        if (pre_line || visible_line) && rendering {
-            if pre_line && 279 < cycle && cycle < 305 {
-                self.reset_y();
-            } else {
-                let visible_cycle = 0 < cycle && cycle < 257; /* 1..256 */
-                let prefetch_cycle = 320 < cycle && cycle < 337;
-                let fetch_cycle = visible_cycle || prefetch_cycle;
-                if (visible_line && fetch_cycle) || (pre_line && prefetch_cycle) {
-                    match cycle & 0x7 {
-                        1 => {
-                            self.load_bgtile();
-                            self.fetch_nametable_byte();
-                        },
-                        3 => self.fetch_attrtable_byte(),
-                        5 => self.fetch_low_bgtile_byte(),
-                        7 => self.fetch_high_bgtile_byte(),
-                        0 => self.wrapping_inc_cx(),
-                        _ => ()
-                    }
-                    match cycle {
-                        1 => self.clear_sprite(), /* clear secondary OAM */
-                        65 => self.eval_sprite(), /* sprite evaluation */
-                        256 => self.wrapping_inc_y(),
-                        _ => ()
-                    }
-                    if visible_cycle {
-                        self.render_pixel();
-                        self.shift_sprites();
-                    }
-                    self.shift_bgtile();
-                } else if cycle == 257 {
-                    /* we don't emulate fetch to per cycle precision because all data are fetched
-                     * from the secondary OAM which is not subject to any change during this
-                     * scanline */
-                    self.reset_cx();
-                    self.fetch_sprite();
-                    self.cycle = 258;
-                    return false
-                }
-                /* skip at 338 because of 10-even_odd_timing test indicates an undocumented
-                 * behavior of NES */
-                if pre_line && cycle == 338 && self.f {
-                    self.cycle = 340;
-                    return false;
-                }
-            }
-        } else {
-            if !rendering { self.bg_pixel = 0 }
-            if self.scanline == 241 && self.cycle == 1 {
-                if !self.early_read {
-                    self.ppustatus |= PPU::FLAG_VBLANK
-                }
-                //self.elapsed = 0;
-                //println!("vbl");
-                self.early_read = false;
-                self.vblank = true;
-                self.scr.render();
-                self.cycle = 2;
-                return self.try_nmi()
-            }
-        }
-        if pre_line && cycle == 1 {
-            /* clear vblank, sprite zero hit & overflow */
-            self.vblank = false;
-            self.ppustatus &= !(PPU::FLAG_VBLANK |
-                                PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
-            self.bg_pixel = 0;
-            self.cycle = 2;
-            return false
-        }
+    fn tick_x_y(&mut self) {
         self.cycle += 1;
         if self.cycle > 340 {
             self.cycle = 0;
@@ -598,6 +737,80 @@ impl<'a> PPU<'a> {
                 self.f = !self.f;
             }
         }
-        false
+    }
+
+    pub fn powerup(&mut self) {
+        for _ in 0..262 {
+            for _ in 0..341 {
+                self.fill_cb_matrix_tick();
+                self.tick_x_y();
+            }
+        }
+    }
+
+    fn fill_cb_matrix_tick(&mut self) {
+        //self.elapsed += 1;
+        let cycle = self.cycle;
+        let f = &mut self.cb_matrix[self.scanline as usize][self.cycle as usize];
+        if cycle == 0 {
+            *f = PPU::zero_cycle;
+            return
+        }
+        let visible_line = self.scanline < 240;
+        let pre_line = self.scanline == 261;
+        if pre_line || visible_line {
+            if pre_line && 279 < cycle && cycle < 305 {
+                *f = PPU::reset_y_cycle
+            } else {
+                let visible_cycle = 0 < cycle && cycle < 257; /* 1..256 */
+                let prefetch_cycle = 320 < cycle && cycle < 337;
+                if (visible_line && prefetch_cycle) || (pre_line && prefetch_cycle) {
+                    *f = match cycle {
+                        1 => PPU::visible_1,
+                        65 => PPU::visible_65,
+                        256 => PPU::visible_256,
+                        _ => match cycle & 0x7 {
+                            0 => PPU::visible_8_1,
+                            1 => PPU::visible_8_1,
+                            3 => PPU::visible_8_3,
+                            5 => PPU::visible_8_5,
+                            7 => PPU::visible_8_7,
+                            _ => PPU::visible_8_other
+                        }
+                    }
+                } else if visible_line && visible_cycle {
+                    *f = match cycle {
+                        1 => PPU::rendering_1,
+                        65 => PPU::rendering_65,
+                        256 => PPU::rendering_256,
+                        _ => match cycle & 0x7 {
+                            0 => PPU::rendering_8_1,
+                            1 => PPU::rendering_8_1,
+                            3 => PPU::rendering_8_3,
+                            5 => PPU::rendering_8_5,
+                            7 => PPU::rendering_8_7,
+                            _ => PPU::rendering_8_other
+                        }
+                    }
+                } else if cycle == 257 {
+                    *f = PPU::visible_257
+                }
+                /* skip at 338 because of 10-even_odd_timing test indicates an undocumented
+                 * behavior of NES */
+                if pre_line {
+                    if cycle == 338 {
+                        *f = PPU::skip_cycle
+                    } else if cycle == 1 {
+                        *f = PPU::vblank_clear_cycle
+                    }
+                }
+            }
+        } else {
+            *f = if self.scanline == 241 && self.cycle == 1 {
+                PPU::vblank_cycle
+            } else {
+                PPU::nop
+            }
+        }
     }
 }
