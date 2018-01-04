@@ -3,7 +3,7 @@ use ppu::PPU;
 use apu::{APU, Sampler};
 use mos6502::{CPU, CPU_FREQ};
 use cartridge::MirrorType;
-use mapper::Mapper;
+use mapper::RefMapper;
 use controller::Controller;
 use core::cell::{RefCell, Cell};
 use core::ptr::null_mut;
@@ -89,14 +89,14 @@ impl<'a> CPUBus<'a> {
 pub struct CPUMemory<'a> {
     sram: [u8; 2048],
     pub bus: CPUBus<'a>,
-    mapper: &'a RefCell<&'a mut Mapper>,
+    mapper: &'a RefMapper<'a>,
     ctl1: Option<&'a Controller>,
     ctl2: Option<&'a Controller>
 }
 
 impl<'a> CPUMemory<'a> {
     pub fn new(
-               mapper: &'a RefCell<&'a mut Mapper>,
+               mapper: &'a RefMapper<'a>,
                ctl1: Option<&'a Controller>,
                ctl2: Option<&'a Controller>) -> Self {
         CPUMemory{sram: [0; 2048],
@@ -137,7 +137,7 @@ impl<'a> CPUMemory<'a> {
         } else if addr < 0x6000 {
             0
         } else {
-            self.mapper.borrow().read(addr)
+            self.mapper.read(addr)
         }
     }
 
@@ -200,7 +200,7 @@ impl<'a> CPUMemory<'a> {
             }
         } else if addr < 0x6000 {
         } else {
-            self.mapper.borrow_mut().write(addr, data)
+            self.mapper.get_mut().write(addr, data)
         }
     }
 }
@@ -220,11 +220,11 @@ impl<'a> VMem for CPUMemory<'a> {
 pub struct PPUMemory<'a> {
     nametable: [u8; 0x800],
     palette: [u8; 0x20],
-    mapper: &'a RefCell<&'a mut Mapper>,
+    mapper: &'a RefMapper<'a>
 }
 
 impl<'a> PPUMemory<'a> {
-    pub fn new(mapper: &'a RefCell<&'a mut Mapper>) -> Self {
+    pub fn new(mapper: &'a RefMapper<'a>) -> Self {
         PPUMemory{
             nametable: [0; 0x800],
             palette: [0; 0x20],
@@ -257,7 +257,7 @@ fn get_mirror_palette(addr: u16) -> u16 {
 impl<'a> PPUMemory<'a> {
     #[inline(always)]
     pub fn read_nametable(&self, addr: u16) -> u8 {
-        let mt = self.mapper.borrow().get_cart().get_mirror_type();
+        let mt = self.mapper.get_cart().get_mirror_type();
         self.nametable[(get_mirror_addr(mt, addr) & 0x7ff) as usize]
     }
 
@@ -268,7 +268,7 @@ impl<'a> PPUMemory<'a> {
 
     #[inline(always)]
     pub fn write_nametable(&mut self, addr: u16, data: u8) {
-        let mt = self.mapper.borrow().get_cart().get_mirror_type();
+        let mt = self.mapper.get_cart().get_mirror_type();
         self.nametable[(get_mirror_addr(mt, addr) & 0x7ff) as usize] = data
     }
 
@@ -279,17 +279,17 @@ impl<'a> PPUMemory<'a> {
 
     #[inline(always)]
     pub fn read_mapper(&self, addr: u16) -> u8 {
-        self.mapper.borrow().read(addr)
+        self.mapper.read(addr)
     }
 
     #[inline(always)]
     fn write_mapper(&self, addr: u16, data: u8) {
-        self.mapper.borrow_mut().write(addr, data)
+        self.mapper.get_mut().write(addr, data)
     }
 
     #[inline(always)]
     pub fn tick(&self, bus: &CPUBus) {
-        self.mapper.borrow_mut().tick(bus)
+        self.mapper.get_mut().tick(bus)
     }
 }
 

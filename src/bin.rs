@@ -3,7 +3,6 @@ extern crate core;
 use std::fs::File;
 use std::sync::{Mutex, Condvar};
 use std::io::Read;
-use std::cell::RefCell;
 use std::intrinsics::transmute;
 use std::process::exit;
 
@@ -423,7 +422,7 @@ fn main() {
         _ => panic!("unsupported mapper {}", mapper_id)
     };
 
-    let mapper = RefCell::new(&mut (*m) as &mut mapper::Mapper);
+    let mapper = mapper::RefMapper::new(&mut (*m) as &mut mapper::Mapper);
     let mut cpu = CPU::new(CPUMemory::new(&mapper, Some(&p1ctl), None));
     let mut ppu = PPU::new(PPUMemory::new(&mapper), &mut (*win));
     let mut apu = APU::new(&mut spkr);

@@ -1,11 +1,35 @@
 #![allow(dead_code)]
 extern crate core;
+use core::cell::UnsafeCell;
 use memory::{VMem, CPUBus};
 use cartridge::{Cartridge, BankType, MirrorType};
 
 pub trait Mapper : VMem {
     fn get_cart(&self) -> &Cartridge;
     fn tick(&mut self, _bus: &CPUBus) {}
+}
+
+pub struct RefMapper<'a> {
+    mapper: UnsafeCell<&'a mut Mapper>
+}
+
+impl<'a> RefMapper<'a> {
+    pub fn new(mapper: &'a mut Mapper) -> Self {
+        RefMapper { mapper: UnsafeCell::new(mapper) }
+    }
+
+    #[inline(always)]
+    pub fn get_mut(&self) -> &'a mut Mapper {
+        unsafe { *self.mapper.get() }
+    }
+}
+
+impl<'a> core::ops::Deref for RefMapper<'a> {
+    type Target = &'a mut Mapper;
+    #[inline(always)]
+    fn deref(&self) -> &&'a mut Mapper {
+        unsafe { &*self.mapper.get() }
+    }
 }
 
 pub struct Mapper1<'a, C> where C: Cartridge {
