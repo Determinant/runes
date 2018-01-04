@@ -308,24 +308,29 @@ impl<'a> PPU<'a> {
 
     fn visible_1(ppu: &mut PPU) -> bool {
         if ppu.rendering {
-            PPU::visible_8_1(ppu);
+            PPU::load_bgtile(ppu);
+            PPU::fetch_nametable_byte(ppu);
             PPU::clear_sprite(ppu);
+            PPU::shift_bgtile(ppu);
         }
         false
     }
 
     fn visible_65(ppu: &mut PPU) -> bool {
         if ppu.rendering {
-            PPU::visible_8_1(ppu);
+            PPU::load_bgtile(ppu);
+            PPU::fetch_nametable_byte(ppu);
             PPU::eval_sprite(ppu);
+            PPU::shift_bgtile(ppu);
         }
         false
     }
 
     fn visible_256(ppu: &mut PPU) -> bool {
         if ppu.rendering {
-            PPU::visible_8_0(ppu);
+            PPU::wrapping_inc_cx(ppu);
             PPU::wrapping_inc_y(ppu);
+            PPU::shift_bgtile(ppu);
         }
         false
     }
@@ -391,24 +396,35 @@ impl<'a> PPU<'a> {
 
     fn rendering_1(ppu: &mut PPU) -> bool {
         if ppu.rendering {
-            PPU::rendering_8_1(ppu);
+            PPU::load_bgtile(ppu);
+            PPU::fetch_nametable_byte(ppu);
             PPU::clear_sprite(ppu);
+            PPU::render_pixel(ppu);
+            PPU::shift_sprites(ppu);
+            PPU::shift_bgtile(ppu);
         }
         false
     }
 
     fn rendering_65(ppu: &mut PPU) -> bool {
         if ppu.rendering {
-            PPU::rendering_8_1(ppu);
+            PPU::load_bgtile(ppu);
+            PPU::fetch_nametable_byte(ppu);
             PPU::eval_sprite(ppu);
+            PPU::render_pixel(ppu);
+            PPU::shift_sprites(ppu);
+            PPU::shift_bgtile(ppu);
         }
         false
     }
 
     fn rendering_256(ppu: &mut PPU) -> bool {
         if ppu.rendering {
-            PPU::rendering_8_0(ppu);
+            PPU::wrapping_inc_cx(ppu);
             PPU::wrapping_inc_y(ppu);
+            PPU::render_pixel(ppu);
+            PPU::shift_sprites(ppu);
+            PPU::shift_bgtile(ppu);
         }
         false
     }
@@ -430,8 +446,8 @@ impl<'a> PPU<'a> {
     }
 
     fn skip_cycle(ppu: &mut PPU) -> bool {
-        if ppu.f {
-            ppu.cycle += 1
+        if ppu.rendering && ppu.f {
+            ppu.cycle += 1;
         }
         false
     }
@@ -454,6 +470,7 @@ impl<'a> PPU<'a> {
         ppu.ppustatus &= !(PPU::FLAG_VBLANK |
                             PPU::FLAG_SPRITE_ZERO | PPU::FLAG_OVERFLOW);
         ppu.bg_pixel = 0;
+        //println!("clear");
         false
     }
     
@@ -463,6 +480,7 @@ impl<'a> PPU<'a> {
         } else if ppu.scanline == 261 {
             ppu.vblank_lines = false
         }
+        //println!("zero");
         false
     }
 
@@ -521,7 +539,9 @@ impl<'a> PPU<'a> {
     }
 
     fn reset_y_cycle(ppu: &mut PPU) -> bool {
-        PPU::reset_y(ppu);
+        if ppu.rendering {
+            PPU::reset_y(ppu)
+        }
         false
     }
 
@@ -746,6 +766,7 @@ impl<'a> PPU<'a> {
                 self.tick_x_y();
             }
         }
+        debug_assert!(self.scanline == 241 && self.cycle == 0);
     }
 
     fn fill_cb_matrix_tick(&mut self) {
@@ -764,13 +785,13 @@ impl<'a> PPU<'a> {
             } else {
                 let visible_cycle = 0 < cycle && cycle < 257; /* 1..256 */
                 let prefetch_cycle = 320 < cycle && cycle < 337;
-                if (visible_line && prefetch_cycle) || (pre_line && prefetch_cycle) {
+                if (visible_line || pre_line) && prefetch_cycle {
                     *f = match cycle {
                         1 => PPU::visible_1,
                         65 => PPU::visible_65,
                         256 => PPU::visible_256,
                         _ => match cycle & 0x7 {
-                            0 => PPU::visible_8_1,
+                            0 => PPU::visible_8_0,
                             1 => PPU::visible_8_1,
                             3 => PPU::visible_8_3,
                             5 => PPU::visible_8_5,
@@ -784,7 +805,7 @@ impl<'a> PPU<'a> {
                         65 => PPU::rendering_65,
                         256 => PPU::rendering_256,
                         _ => match cycle & 0x7 {
-                            0 => PPU::rendering_8_1,
+                            0 => PPU::rendering_8_0,
                             1 => PPU::rendering_8_1,
                             3 => PPU::rendering_8_3,
                             5 => PPU::rendering_8_5,
@@ -805,12 +826,10 @@ impl<'a> PPU<'a> {
                     }
                 }
             }
+        } else if self.scanline == 241 && self.cycle == 1 {
+            *f = PPU::vblank_cycle
         } else {
-            *f = if self.scanline == 241 && self.cycle == 1 {
-                PPU::vblank_cycle
-            } else {
-                PPU::nop
-            }
+            *f = PPU::nop
         }
     }
 }
