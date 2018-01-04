@@ -5,8 +5,7 @@ use std::sync::{Mutex, Condvar};
 use std::io::Read;
 use std::cell::RefCell;
 use std::intrinsics::transmute;
-//use std::time::{Instant, Duration};
-//use std::thread;
+use std::process::exit;
 
 extern crate sdl2;
 #[macro_use] extern crate clap;
@@ -211,7 +210,7 @@ impl<'a> ppu::Screen for SDLWindow<'a> {
         self.canvas.clear();
         self.canvas.copy(&self.texture, self.copy_area, None).unwrap();
         self.canvas.present();
-        if self.poll() {std::process::exit(0);}
+        if self.poll() { exit(0) }
     }
 }
 
@@ -360,7 +359,7 @@ fn main() {
     let fname = matches.value_of("INPUT").unwrap();
     let mut file = File::open(fname).unwrap();
     let mut rheader = [0; 16];
-    println!("read {}", file.read(&mut rheader[..]).unwrap());
+    file.read(&mut rheader[..]).unwrap();
     let header = unsafe{transmute::<[u8; 16], INesHeader>(rheader)};
     let mirror = match ((header.flags6 >> 2) & 2) | (header.flags6 & 1) {
         0 => MirrorType::Horizontal,
@@ -370,8 +369,11 @@ fn main() {
         _ => MirrorType::Four,
     };
     let mapper_id = (header.flags7 & 0xf0) | (header.flags6 >> 4);
-    println!("magic:{}, prg size:{}, chr size:{}, mirror type:{}, mapper:{}",
-             std::str::from_utf8(&header.magic).unwrap(),
+    if std::str::from_utf8(&header.magic).unwrap() != "NES\x1a" {
+        println!("not an iNES file");
+        exit(1);
+    }
+    println!("prg size:{}, chr size:{}, mirror type:{}, mapper:{}",
              header.prg_rom_nbanks,
              header.chr_rom_nbanks,
              mirror as u8,

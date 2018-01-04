@@ -26,8 +26,9 @@ impl LPFilter {
     }
 
     fn output(&mut self, input: i16) -> i16 {
-        let out = cutoff((input as i32 - self.prev_out as i32)
-                        * LP_FACTOR / AUDIO_LEVEL_MAX);
+        let out = cutoff(self.prev_out as i32 +
+                         (input as i32 - self.prev_out as i32)
+                            * LP_FACTOR / AUDIO_LEVEL_MAX);
         self.prev_out = out;
         out
     }
