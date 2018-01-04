@@ -243,7 +243,7 @@ impl<'a> PPU<'a> {
     fn load_bgtile(&mut self) {
         /* load the tile bitmap to high 8 bits of bitmap,
          * assume the high 8 bits are zeros */
-        assert!(self.bg_pixel >> 32 == 0);
+        debug_assert!(self.bg_pixel >> 32 == 0);
         let mut t: u64 = 0;
         let mut bl = self.bg_bit_low;
         let mut bh = self.bg_bit_high;
@@ -505,15 +505,15 @@ impl<'a> PPU<'a> {
     }
 
     fn _tick(&mut self) -> bool {
-        if self.scanline == 240 {
-            self.vblank_lines = true
-        } else if self.scanline == 261 {
-            self.vblank_lines = false
-        }
         //self.elapsed += 1;
         let cycle = self.cycle;
         if cycle == 0 {
             self.cycle = 1;
+            if self.scanline == 240 {
+                self.vblank_lines = true
+            } else if self.scanline == 261 {
+                self.vblank_lines = false
+            }
             return false;
         }
         let rendering = self.get_show_bg() || self.get_show_sp();
