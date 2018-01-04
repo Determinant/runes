@@ -46,27 +46,29 @@ pub struct Mapper1<'a, C> where C: Cartridge {
 impl<'a, C> VMem for Mapper1<'a, C> where C: Cartridge {
     fn read(&self, addr: u16) -> u8 {
         let addr = addr as usize;
-        if addr < 0x2000 {         /* 0x2000 size bank */
-            self.chr_banks[(addr >> 12) & 1][addr & 0xfff]
-        } else if addr >= 0x8000 { /* 0x4000 size bank */
-            self.prg_banks[(addr >> 14) & 1][addr & 0x3fff]
-        } else if addr >= 0x6000 {
-            self.sram[addr - 0x6000]
-        } else {
-            panic!("unmapped address: 0x{:04x}", addr)
+        match addr >> 12 {
+            /* [0x0000..0x2000) */
+            0 | 1 => self.chr_banks[(addr >> 12) & 1][addr & 0xfff],
+            /* [0x2000..0x6000) */
+            2 | 3 | 4 | 5 => panic!("unmapped address: 0x{:04x}", addr),
+            /* [0x6000..0x8000) */
+            6 | 7 => self.sram[addr - 0x6000],
+            /* [0x8000..0xffff] */
+            _ => self.prg_banks[(addr >> 14) & 1][addr & 0x3fff]
         }
     }
 
     fn write(&mut self, addr: u16, data: u8) {
         let addr = addr as usize;
-        if addr < 0x2000 {
-            self.chr_banks[(addr >> 12) & 1][addr & 0xfff] = data
-        } else if addr >= 0x8000 {
-            self.write_loadreg(addr as u16, data)
-        } else if addr >= 0x6000 {
-            self.sram[addr - 0x6000] = data
-        } else {
-            panic!("invalid write to address: 0x{:04x}", addr);
+        match addr >> 12 {
+            /* [0x0000..0x2000) */
+            0 | 1 => self.chr_banks[(addr >> 12) & 1][addr & 0xfff] = data,
+            /* [0x2000..0x6000) */
+            2 | 3 | 4 | 5 => panic!("unmapped address: 0x{:04x}", addr),
+            /* [0x6000..0x8000) */
+            6 | 7 => self.sram[addr - 0x6000] = data,
+            /* [0x8000..0xffff] */
+            _ => self.write_loadreg(addr as u16, data)
         }
     }
 }
@@ -185,30 +187,33 @@ pub struct Mapper2<'a, C> where C: Cartridge {
 impl<'a, C> VMem for Mapper2<'a, C> where C: Cartridge {
     fn read(&self, addr: u16) -> u8 {
         let addr = addr as usize;
-        if addr < 0x2000 {         /* 0x2000 size bank */
-            self.chr_bank[addr]
-        } else if addr >= 0x8000 { /* 0x4000 size bank */
-            self.prg_banks[(addr >> 14) & 1][addr & 0x3fff]
-        } else if addr >= 0x6000 {
-            self.sram[addr - 0x6000]
-        } else {
-            panic!("unmapped address: 0x{:04x}", addr)
+        match addr >> 12 {
+            /* [0x0000..0x2000) */
+            0 | 1 => self.chr_bank[addr],
+            /* [0x2000..0x6000) */
+            2 | 3 | 4 | 5 => panic!("unmapped address: 0x{:04x}", addr),
+            /* [0x6000..0x8000) */
+            6 | 7 => self.sram[addr - 0x6000],
+            /* [0x8000..0xffff] */
+            _ => self.prg_banks[(addr >> 14) & 1][addr & 0x3fff]
         }
     }
 
     fn write(&mut self, addr: u16, data: u8) {
         let addr = addr as usize;
-        if addr < 0x2000 {
-            self.chr_bank[addr] = data;
-        } else if addr >= 0x8000 {
-            self.prg_banks[0] =
-                self.cart.get_bank(((data as usize) % self.prg_nbank) << 14,
-                0x4000,
-                BankType::PrgRom)
-        } else if addr >= 0x6000 {
-            self.sram[addr - 0x6000] = data
-        } else {
-            panic!("invalid write to address: 0x{:04x}", addr);
+        match addr >> 12 {
+            /* [0x0000..0x2000) */
+            0 | 1 => self.chr_bank[addr] = data,
+            /* [0x2000..0x6000) */
+            2 | 3 | 4 | 5 => panic!("unmapped address: 0x{:04x}", addr),
+            /* [0x6000..0x8000) */
+            6 | 7 => self.sram[addr - 0x6000] = data,
+            /* [0x8000..0xffff] */
+            _ => self.prg_banks[0] =
+                    self.cart.get_bank(
+                        ((data as usize) % self.prg_nbank) << 14,
+                        0x4000,
+                        BankType::PrgRom)
         }
     }
 }
@@ -259,43 +264,47 @@ pub struct Mapper4<'a, C> where C: Cartridge {
 impl<'a, C> VMem for Mapper4<'a, C> where C: Cartridge {
     fn read(&self, addr: u16) -> u8 {
         let addr = addr as usize;
-        if addr < 0x2000 {
-            self.chr_banks[addr >> 10][addr & 0x3ff]
-        } else if addr >= 0x8000 {
-            let addr = addr - 0x8000;
-            self.prg_banks[addr >> 13][addr & 0x1fff]
-        } else if addr >= 0x6000 {
-            self.sram[addr - 0x6000]
-        } else {
-            panic!("unmapped address: 0x{:04x}", addr)
+        match addr >> 12 {
+            /* [0x0000..0x2000) */
+            0 | 1 => self.chr_banks[addr >> 10][addr & 0x3ff],
+            /* [0x2000..0x6000) */
+            2 | 3 | 4 | 5 => panic!("unmapped address: 0x{:04x}", addr),
+            /* [0x6000..0x8000) */
+            6 | 7 => self.sram[addr - 0x6000],
+            /* [0x8000..0xffff] */
+            _ => {
+                let addr = addr - 0x8000;
+                self.prg_banks[addr >> 13][addr & 0x1fff]
+            }
         }
     }
 
     fn write(&mut self, addr: u16, data: u8) {
         let addr = addr as usize;
-        if addr < 0x2000 {
-            self.chr_banks[addr >> 10][addr & 0x3ff] = data
-        } else if addr < 0x6000 {
-            panic!("invalid write to address: 0x{:04x}", addr)
-        } else if addr < 0x8000 {
-            self.sram[addr - 0x6000] = data
-        } else if addr < 0xa000 {
-            match addr & 1 {
+        match addr >> 12 {
+            /* [0x0000..0x2000) */
+            0 | 1 => self.chr_banks[addr >> 10][addr & 0x3ff] = data,
+            /* [0x2000..0x6000) */
+            2 | 3 | 4 | 5 => panic!("unmapped address: 0x{:04x}", addr),
+            /* [0x6000..0x8000) */
+            6 | 7 => self.sram[addr - 0x6000] = data,
+            /* [0x8000..0xa000) */
+            8 | 9 => match addr & 1 {
                 0 => self.write_select_reg(data),
                 _ => self.write_bank_data(data)
-            }
-        } else if addr < 0xc000 {
-            match addr & 1 {
+            },
+            /* [0xa000..0xc000) */
+            0xa | 0xb => match addr & 1 {
                 0 => self.write_mirror(data),
                 _ => ()
-            }
-        } else if addr < 0xe000 {
-            match addr & 1 {
+            },
+            /* [0xc000..0xe000) */
+            0xc | 0xd => match addr & 1 {
                 0 => self.irq_reload = data,
                 _ => self.irq_counter = 0
-            }
-        } else {
-            match addr & 1 {
+            },
+            /* [0xe000..0xffff] */
+            _ => match addr & 1 {
                 0 => self.irq_enable = false,
                 _ => self.irq_enable = true
             }
