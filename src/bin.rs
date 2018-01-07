@@ -1,10 +1,12 @@
+#![feature(const_size_of)]
 extern crate core;
 
 use std::fs::File;
 use std::sync::{Mutex, Condvar};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::intrinsics::transmute;
 use std::process::exit;
+use std::cell::Cell;
 
 extern crate sdl2;
 #[macro_use] extern crate clap;
@@ -14,6 +16,7 @@ use sdl2::keyboard::Keycode;
 use sdl2::rect::Rect;
 use clap::{Arg, App};
 
+ mod utils;
 mod memory;
 #[macro_use] mod mos6502;
 mod ppu;
@@ -73,7 +76,17 @@ impl Cartridge for SimpleCart {
             BankType::Sram => self.sram.len()
         }
     }
-    fn get_bank<'a>(&mut self, base: usize, size: usize, kind: BankType) -> &'a mut [u8] {
+    fn get_bank<'a>(&self, base: usize, size: usize, kind: BankType) -> &'a [u8] {
+        unsafe {
+            &*((&(match kind {
+                BankType::PrgRom => &self.prg_rom,
+                BankType::ChrRom => &self.chr_rom,
+                BankType::Sram => &self.sram,
+            })[base..base + size]) as *const [u8])
+        }
+    }
+
+    fn get_bank_mut<'a>(&mut self, base: usize, size: usize, kind: BankType) -> &'a mut [u8] {
         unsafe {
             &mut *((&mut (match kind {
                 BankType::PrgRom => &mut self.prg_rom,
@@ -82,8 +95,47 @@ impl Cartridge for SimpleCart {
             })[base..base + size]) as *mut [u8])
         }
     }
+
     fn get_mirror_type(&self) -> MirrorType {self.mirror_type}
     fn set_mirror_type(&mut self, mt: MirrorType) {self.mirror_type = mt}
+
+    fn load(&mut self, reader: &mut utils::Read) -> bool {
+        let len = self.sram.len();
+        (match reader.read(&mut self.sram) {
+            Some(x) => x == len,
+            None => false
+        }) &&
+        utils::load_prefix(&mut self.mirror_type, 0, reader)
+    }
+
+    fn save(&self, writer: &mut utils::Write) -> bool {
+        let len = self.sram.len();
+        (match writer.write(&self.sram) {
+            Some(x) => x == len,
+            None => false
+        }) &&
+        utils::save_prefix(&self.mirror_type, 0, writer)
+    }
+}
+
+struct FileIO(File);
+
+impl utils::Read for FileIO {
+    fn read(&mut self, buf: &mut [u8]) -> Option<usize> {
+        match self.0.read(buf) {
+            Ok(x) => Some(x),
+            Err(_) => None
+        }
+    }
+}
+
+impl utils::Write for FileIO {
+    fn write(&mut self, buf: &[u8]) -> Option<usize> {
+        match self.0.write(buf) {
+            Ok(x) => Some(x),
+            Err(_) => None
+        }
+    }
 }
 
 struct SDLWindow<'a> {
@@ -95,6 +147,7 @@ struct SDLWindow<'a> {
     p1_ctl: &'a stdctl::Joystick,
     p1_keymap: [u8; 256],
     copy_area: Option<Rect>,
+    exit_flag: &'a Cell<bool>
 }
 
 macro_rules! gen_keymap {
@@ -107,7 +160,8 @@ impl<'a> SDLWindow<'a> {
     fn new(sdl_context: &'a sdl2::Sdl,
            p1_ctl: &'a stdctl::Joystick,
            pixel_scale: u32,
-           full_screen: bool) -> Self {
+           full_screen: bool,
+           exit_flag: &'a Cell<bool>) -> Self {
         use Keycode::*;
         let video_subsystem = sdl_context.video().unwrap();
         let mut actual_height = PIX_HEIGHT * pixel_scale;
@@ -139,7 +193,7 @@ impl<'a> SDLWindow<'a> {
                         PIX_WIDTH, PIX_HEIGHT).unwrap(),
             p1_button_state: 0,
             p1_ctl, p1_keymap: [stdctl::NULL; 256],
-            copy_area
+            copy_area, exit_flag
         };
         {
             let keymap = &mut res.p1_keymap;
@@ -209,7 +263,11 @@ impl<'a> ppu::Screen for SDLWindow<'a> {
         self.canvas.clear();
         self.canvas.copy(&self.texture, self.copy_area, None).unwrap();
         self.canvas.present();
-        if self.poll() { exit(0) }
+        if self.poll() {
+            /*
+            */
+            self.exit_flag.set(true)
+        }
     }
 }
 
@@ -347,6 +405,11 @@ fn main() {
                          .help("the iNES ROM file")
                          .required(true)
                          .index(1))
+                    .arg(Arg::with_name("load")
+                         .short("l")
+                         .long("load")
+                         .required(false)
+                         .takes_value(true))
                     .get_matches();
 
     let scale = std::cmp::min(8,
@@ -356,6 +419,7 @@ fn main() {
 
     /* load and parse iNES file */
     let fname = matches.value_of("INPUT").unwrap();
+    let lname = matches.value_of("load");
     let mut file = File::open(fname).unwrap();
     let mut rheader = [0; 16];
     file.read(&mut rheader[..]).unwrap();
@@ -391,7 +455,7 @@ fn main() {
 
     let mut prg_rom = vec![0; prg_len];
     let mut chr_rom = vec![0; chr_len];
-    let sram = vec![0; 0x4000];
+    let sram = vec![0; 0x2000];
     println!("read prg {}", file.read(&mut prg_rom[..]).unwrap());
     println!("read chr {}", file.read(&mut chr_rom[..]).unwrap());
 
@@ -412,9 +476,10 @@ fn main() {
     }).unwrap();
     /* P1 controller */
     let p1ctl = stdctl::Joystick::new();
-    /* cartridge & mapper */
+    /* construct mapper from cartridge data */
     let cart = SimpleCart::new(chr_rom, prg_rom, sram, mirror);
-    let mut win = Box::new(SDLWindow::new(&sdl_context, &p1ctl, scale, full));
+    let exit_flag = Cell::new(false);
+    let mut win = Box::new(SDLWindow::new(&sdl_context, &p1ctl, scale, full, &exit_flag));
     let mut m: Box<mapper::Mapper> = match mapper_id {
         0 | 2 => Box::new(mapper::Mapper2::new(cart)),
         1 => Box::new(mapper::Mapper1::new(cart)),
@@ -428,12 +493,34 @@ fn main() {
     let mut apu = APU::new(&mut spkr);
     let cpu_ptr = &mut cpu as *mut CPU;
     cpu.mem.bus.attach(cpu_ptr, &mut ppu, &mut apu);
-    cpu.powerup();
+    match lname {
+        Some(s) => {
+            let mut file = FileIO(File::open(s).unwrap());
+            cpu.load(&mut file);
+            ppu.load(&mut file);
+            apu.load(&mut file);
+            mapper.get_mut().load(&mut file);
+            debug_assert!(cpu.cycle == 0);
+        },
+        None => {
+            cpu.powerup()
+        }
+    }
     device.resume();
     loop {
         /* consume the leftover cycles from the last instruction */
         while cpu.cycle > 0 {
             cpu.mem.bus.tick()
+        }
+        if exit_flag.get() {
+            {
+                let mut file = FileIO(File::create("t.dat").unwrap());
+                cpu.save(&mut file);
+                ppu.save(&mut file);
+                apu.save(&mut file);
+                mapper.save(&mut file);
+            }
+            exit(0);
         }
         //print_cpu_trace(&cpu);
         cpu.step();

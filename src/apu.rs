@@ -1,7 +1,11 @@
 #![allow(dead_code)]
 use mos6502::CPU_FREQ;
 use memory::CPUBus;
+use utils::Sampler;
+use core::mem::size_of;
+use utils::{Read, Write, load_prefix, save_prefix};
 
+#[repr(C)]
 struct LPFilter {
     prev_out: i16
 }
@@ -25,6 +29,14 @@ impl LPFilter {
         LPFilter { prev_out: 0 }
     }
 
+    fn load(&mut self, reader: &mut Read) -> bool {
+        load_prefix(self, 0, reader)
+    }
+
+    fn save(&self, writer: &mut Write) -> bool {
+        save_prefix(self, 0, writer)
+    }
+
     fn output(&mut self, input: i16) -> i16 {
         let out = cutoff(self.prev_out as i32 +
                          (input as i32 - self.prev_out as i32)
@@ -34,6 +46,7 @@ impl LPFilter {
     }
 }
 
+#[repr(C)]
 struct HPFilter {
     prev_in: i16,
     prev_out: i16,
@@ -47,6 +60,14 @@ impl HPFilter {
             prev_out: 0,
             hp_factor
         }
+    }
+
+    fn load(&mut self, reader: &mut Read) -> bool {
+        load_prefix(self, 0, reader)
+    }
+
+    fn save(&self, writer: &mut Write) -> bool {
+        save_prefix(self, 0, writer)
     }
 
     fn output(&mut self, input: i16) -> i16 {
@@ -137,52 +158,7 @@ const TND_TABLE: [u16; 203] = [
     0xbbfe, 0xbc84, 0xbd09, 0xbd8d, 0xbe11
 ];
 
-pub struct Sampler {
-    freq2: u32,
-    q0: u32,
-    r0: u32,
-    ddl: (u32, u32),
-    cnt: u32,
-    sec_cnt: u32
-}
-
-impl Sampler {
-    pub fn new(freq1: u32, freq2: u32) -> Self {
-        let q0 = freq1 / freq2;
-        let r0 = freq1 - q0 * freq2;
-        Sampler {
-            freq2,
-            q0,
-            r0,
-            ddl: (q0, r0),
-            cnt: 0,
-            sec_cnt: 0
-        }
-    }
-
-    pub fn tick(&mut self) -> (bool, bool) {
-        let (q, r) = self.ddl;
-        if self.cnt == q {
-            let nr = r + self.r0;
-            self.ddl = if nr > self.freq2 {
-                (self.q0, nr - self.freq2)
-            } else {
-                (self.q0 - 1, nr)
-            };
-            self.cnt = 0;
-            self.sec_cnt += 1;
-            let sec = self.sec_cnt == self.freq2;
-            if sec {
-                self.sec_cnt = 0
-            }
-            (true, sec)
-        } else {
-            self.cnt += 1;
-            (false, false)
-        }
-    }
-}
-
+#[repr(C)]
 pub struct Pulse {
     /* envelope */
     env_period: u8,
@@ -221,6 +197,14 @@ impl Pulse {
                swp_en: false, swp_neg: false, swp_rld: false, muted: false,
                len_lvl: 0, timer_period: 0, timer_lvl: 0,
                seq_wave: 0, seq_cnt: 0, enabled: false, comple}
+    }
+
+    fn load(&mut self, reader: &mut Read) -> bool {
+        load_prefix(self, 0, reader)
+    }
+
+    fn save(&self, writer: &mut Write) -> bool {
+        save_prefix(self, 0, writer)
     }
 
     pub fn write_reg1(&mut self, data: u8) {
@@ -351,6 +335,7 @@ impl Pulse {
     }
 }
 
+#[repr(C)]
 pub struct Triangle {
     /* linear counter */
     cnt_rld: bool,
@@ -375,6 +360,14 @@ impl Triangle {
             len_lvl: 0, timer_period: 0, timer_lvl: 0,
             seq_cnt: 0, enabled: false, ctrl: false
         }
+    }
+
+    fn load(&mut self, reader: &mut Read) -> bool {
+        load_prefix(self, 0, reader)
+    }
+
+    fn save(&self, writer: &mut Write) -> bool {
+        save_prefix(self, 0, writer)
     }
 
     pub fn write_reg1(&mut self, data: u8) {
@@ -452,6 +445,7 @@ impl Triangle {
 }
 
 
+#[repr(C)]
 pub struct Noise {
     /* envelope */
     env_period: u8,
@@ -480,6 +474,14 @@ impl Noise {
                len_lvl: 0, timer_period: 0, timer_lvl: 0,
                shift_reg: 1, loop_noise: false,
                enabled: false}
+    }
+
+    fn load(&mut self, reader: &mut Read) -> bool {
+        load_prefix(self, 0, reader)
+    }
+
+    fn save(&self, writer: &mut Write) -> bool {
+        save_prefix(self, 0, writer)
     }
 
     pub fn write_reg1(&mut self, data: u8) {
@@ -564,6 +566,7 @@ impl Noise {
     }
 }
 
+#[repr(C)]
 pub struct DMC {
     dmc_loop: bool,
     dmc_cnt: u8,
@@ -589,6 +592,14 @@ impl DMC {
             shift_reg: 0, cur_addr: 0, rem_len: 0, level: 0,
             timer_lvl: 0, timer_period: 0, enabled: false
         }
+    }
+
+    fn load(&mut self, reader: &mut Read) -> bool {
+        load_prefix(self, 0, reader)
+    }
+
+    fn save(&self, writer: &mut Write) -> bool {
+        save_prefix(self, 0, writer)
     }
 
     pub fn write_reg1(&mut self, data: u8) {
@@ -681,27 +692,49 @@ impl DMC {
     fn output(&self) -> u8 { self.level }
 }
 
+#[repr(C)]
 pub struct APU<'a> {
+    /*-- begin state --*/
+    frame_lvl: u8,
+    frame_mode: bool, /* true for 5-step mode */
+    frame_inh: bool,
+    frame_int: bool,
+    cycle_even: bool,
+    /*-- end state --*/
+
+    /*-- begin sub-state --*/
     pub pulse1: Pulse,
     pub pulse2: Pulse,
     pub triangle: Triangle,
     pub noise: Noise,
     pub dmc: DMC,
-    frame_lvl: u8,
-    frame_mode: bool, /* true for 5-step mode */
-    frame_inh: bool,
-    frame_int: bool,
-    frame_sampler: Sampler,
-    audio_sampler: Sampler,
-    cycle_even: bool,
-    spkr: &'a mut Speaker,
+
     lp_filter: LPFilter,
     hp_filter1: HPFilter,
-    hp_filter2: HPFilter
+    hp_filter2: HPFilter,
+
+    frame_sampler: Sampler,
+    audio_sampler: Sampler,
+    /*-- end sub-state --*/
+
+    spkr: &'a mut Speaker,
 }
 
+const APU_IGNORED_SIZE: usize =
+    size_of::<Pulse>() +
+    size_of::<Pulse>() +
+    size_of::<Triangle>() +
+    size_of::<Noise>() +
+    size_of::<DMC>() +
+    size_of::<LPFilter>() +
+    size_of::<HPFilter>() +
+    size_of::<HPFilter>() +
+    size_of::<Sampler>() +
+    size_of::<Sampler>() +
+    size_of::<&Speaker>();
+
 impl<'a> APU<'a> {
-    pub fn new(spkr: &'a mut Speaker/*, bus: &'a CPUBus<'a>*/) -> Self {
+    pub fn new(spkr: &'a mut Speaker) -> Self {
         APU {
             pulse1: Pulse::new(false), pulse2: Pulse::new(true),
             triangle: Triangle::new(),
@@ -718,12 +751,40 @@ impl<'a> APU<'a> {
         }
     }
 
+    pub fn load(&mut self, reader: &mut Read) -> bool {
+        load_prefix(self, APU_IGNORED_SIZE, reader) &&
+        self.pulse1.load(reader) &&
+        self.pulse2.load(reader) &&
+        self.triangle.load(reader) &&
+        self.noise.load(reader) &&
+        self.dmc.load(reader) &&
+        self.lp_filter.load(reader) &&
+        self.hp_filter1.load(reader) &&
+        self.hp_filter2.load(reader) &&
+        self.frame_sampler.load(reader) &&
+        self.audio_sampler.load(reader)
+    }
+
+    pub fn save(&self, writer: &mut Write) -> bool {
+        save_prefix(self, APU_IGNORED_SIZE, writer) &&
+        self.pulse1.save(writer) &&
+        self.pulse2.save(writer) &&
+        self.triangle.save(writer) &&
+        self.noise.save(writer) &&
+        self.dmc.save(writer) &&
+        self.lp_filter.save(writer) &&
+        self.hp_filter1.save(writer) &&
+        self.hp_filter2.save(writer) &&
+        self.frame_sampler.save(writer) &&
+        self.audio_sampler.save(writer)
+    }
+
     pub fn tick(&mut self, bus: &CPUBus) -> bool {
         let mut irq = false;
-        if let (true, _) = self.frame_sampler.tick() {
+        if self.frame_sampler.tick() {
             irq = self.tick_frame_counter();
         }
-        if let (true, _) = self.audio_sampler.tick() {
+        if self.audio_sampler.tick() {
             let sample = self.output();
             self.spkr.queue(sample);
         }

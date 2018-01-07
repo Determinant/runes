@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 use memory::{VMem, PPUMemory, CPUBus};
 use core::intrinsics::transmute;
+use core::mem::size_of;
+use utils::{Read, Write, load_prefix, save_prefix};
 
 pub trait Screen {
     fn put(&mut self, x: u8, y: u8, color: u8);
@@ -17,22 +19,22 @@ struct Sprite {
     x: u8
 }
 
+#[repr(C)]
 pub struct PPU<'a> {
+    /*-- begin state --*/
     pub scanline: u16,
+    pub cycle: u16, /* cycle in the current scanline */
     /* registers */
     ppuctl: u8,
     ppumask: u8,
     ppustatus: u8,
     oamaddr: u8,
-
     reg: u8,
-    
     x: u8, /* fine x scroll */
     v: u16, /* current vram addr */
     t: u16, /* temporary vram addr */
     w: bool, /* first/second write toggle */
     f: bool, /* if it is an odd frame */
-    pub cycle: u16, /* cycle in the current scanline */
     /* rendering regs & latches */
         /* background register (current two tiles) */
     bg_pixel: u64,
@@ -51,11 +53,18 @@ pub struct PPU<'a> {
     pub vblank_lines: bool,
     buffered_read: u8,
     early_read: bool,
-    /* IO */
+    /*-- end state --*/
+
+    /*-- begin sub-state --*/
     mem: PPUMemory<'a>,
+    /*-- end sub-state --*/
+
     pub scr: &'a mut Screen,
-    //pub elapsed: u32,
 }
+
+const PPU_IGNORED_SIZE: usize =
+    size_of::<PPUMemory>() +
+    size_of::<&mut Screen>();
 
 impl<'a> PPU<'a> {
     #[inline]
@@ -191,7 +200,7 @@ impl<'a> PPU<'a> {
     #[inline(always)] fn get_show_leftmost_sp(&self) -> bool { (self.ppumask >> 2) & 1 == 1}
     #[inline(always)] pub fn get_show_bg(&self) -> bool { (self.ppumask >> 3) & 1 == 1}
     #[inline(always)] pub fn get_show_sp(&self) -> bool { (self.ppumask >> 4) & 1 == 1}
-    #[inline(always)] pub fn get_flag_vblank(&self) -> bool { (self.ppustatus >> 7) & 1 == 1 }
+    #[inline(always)] fn get_flag_vblank(&self) -> bool { (self.ppustatus >> 7) & 1 == 1 }
     #[inline(always)] fn get_oam_arr(&self) -> &[[u8; 4]; 64] {
         unsafe {transmute::<&[Sprite; 64], &[[u8; 4]; 64]>(&self.oam)}
     }
@@ -478,8 +487,17 @@ impl<'a> PPU<'a> {
             buffered_read,
             early_read: false,
             mem, scr,
-            //elapsed: 0,
         }
+    }
+
+    pub fn load(&mut self, reader: &mut Read) -> bool {
+        load_prefix(self, PPU_IGNORED_SIZE, reader) &&
+        self.mem.load(reader)
+    }
+
+    pub fn save(&self, writer: &mut Write) -> bool {
+        save_prefix(self, PPU_IGNORED_SIZE, writer) &&
+        self.mem.save(writer)
     }
 
     pub fn reset(&mut self) {
@@ -505,7 +523,6 @@ impl<'a> PPU<'a> {
     }
 
     fn _tick(&mut self) -> bool {
-        //self.elapsed += 1;
         let cycle = self.cycle;
         if cycle == 0 {
             self.cycle = 1;
@@ -571,8 +588,6 @@ impl<'a> PPU<'a> {
                 if !self.early_read {
                     self.ppustatus |= PPU::FLAG_VBLANK
                 }
-                //self.elapsed = 0;
-                //println!("vbl");
                 self.early_read = false;
                 self.vblank = true;
                 self.scr.render();

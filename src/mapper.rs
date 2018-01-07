@@ -3,10 +3,13 @@ extern crate core;
 use core::cell::UnsafeCell;
 use memory::{VMem, CPUBus};
 use cartridge::{Cartridge, BankType, MirrorType};
+use utils::{Read, Write, load_prefix, save_prefix};
 
 pub trait Mapper : VMem {
     fn get_cart(&self) -> &Cartridge;
     fn tick(&mut self, _bus: &CPUBus) {}
+    fn load(&mut self, reader: &mut Read) -> bool;
+    fn save(&self, writer: &mut Write) -> bool;
 }
 
 pub struct RefMapper<'a> {
@@ -93,10 +96,10 @@ impl<'a, C> Mapper1<'a, C> where C: Cartridge {
                         c.get_bank((prg_nbank - 1) << 14, 0x4000, BankType::PrgRom)
                     ];
                     m.chr_banks = [
-                        c.get_bank(0, 0x1000, BankType::ChrRom),
-                        c.get_bank(0x1000, 0x1000, BankType::ChrRom)
+                        c.get_bank_mut(0, 0x1000, BankType::ChrRom),
+                        c.get_bank_mut(0x1000, 0x1000, BankType::ChrRom)
                     ];
-                    m.sram = c.get_bank(0, 0x2000, BankType::Sram);
+                    m.sram = c.get_bank_mut(0, 0x2000, BankType::Sram);
             }
             m
         }
@@ -128,18 +131,18 @@ impl<'a, C> Mapper1<'a, C> where C: Cartridge {
                     0x0 => {
                         let base = ((load_reg & 0xfe) as usize % self.chr_nbank) << 13;
                         self.chr_banks = [
-                            self.cart.get_bank(base, 0x1000, BankType::ChrRom),
-                            self.cart.get_bank(base + 0x1000, 0x1000, BankType::ChrRom)];
+                            self.cart.get_bank_mut(base, 0x1000, BankType::ChrRom),
+                            self.cart.get_bank_mut(base + 0x1000, 0x1000, BankType::ChrRom)];
                     },
                     _ =>
-                        self.chr_banks[0] = self.cart.get_bank(
+                        self.chr_banks[0] = self.cart.get_bank_mut(
                             (load_reg as usize % (self.chr_nbank << 1)) << 12,
                             0x1000, BankType::ChrRom)
                 }
             },
             0x2 => {
                 if (self.ctl_reg >> 4) & 1 == 1 {
-                    self.chr_banks[1] = self.cart.get_bank(
+                    self.chr_banks[1] = self.cart.get_bank_mut(
                             (load_reg as usize % (self.chr_nbank << 1)) << 12,
                             0x1000, BankType::ChrRom)
                 }
@@ -174,6 +177,42 @@ impl<'a, C> Mapper1<'a, C> where C: Cartridge {
 
 impl<'a, C> Mapper for Mapper1<'a, C> where C: Cartridge {
     fn get_cart(&self) -> &Cartridge {&self.cart}
+
+    fn load(&mut self, reader: &mut Read) -> bool {
+        for v in self.prg_banks.iter_mut() {
+            let mut offset: usize = 0;
+            if !load_prefix(&mut offset, 0, reader) { return false }
+            *v = self.cart.get_bank(offset, 0x4000, BankType::PrgRom);
+        }
+        for v in self.chr_banks.iter_mut() {
+            let mut offset: usize = 0;
+            if !load_prefix(&mut offset, 0, reader) { return false }
+            *v = self.cart.get_bank_mut(offset, 0x1000, BankType::ChrRom);
+        }
+        load_prefix(&mut self.ctl_reg, 0, reader) &&
+        load_prefix(&mut self.load_reg, 0, reader) &&
+        self.cart.load(reader)
+    }
+
+    fn save(&self, writer: &mut Write) -> bool {
+        let prg_base = self.cart.get_bank(0, 0, BankType::PrgRom).as_ptr();
+        let chr_base = self.cart.get_bank(0, 0, BankType::ChrRom).as_ptr();
+        for v in self.prg_banks.iter() {
+            if !save_prefix(&(v.as_ptr() as usize - prg_base as usize),
+                            0, writer) {
+                return false
+            }
+        }
+        for v in self.chr_banks.iter() {
+            if !save_prefix(&(v.as_ptr() as usize - chr_base as usize),
+                            0, writer) {
+                return false
+            }
+        }
+        save_prefix(&self.ctl_reg, 0, writer) &&
+        save_prefix(&self.load_reg, 0, writer) &&
+        self.cart.save(writer)
+    }
 }
 
 pub struct Mapper2<'a, C> where C: Cartridge {
@@ -233,8 +272,8 @@ impl<'a, C> Mapper2<'a, C> where C: Cartridge {
                         c.get_bank(0, 0x4000, BankType::PrgRom),
                         c.get_bank((nbank - 1) << 14, 0x4000, BankType::PrgRom)
                     ];
-                    m.chr_bank = c.get_bank(0, 0x2000, BankType::ChrRom);
-                    m.sram = c.get_bank(0, 0x2000, BankType::Sram);
+                    m.chr_bank = c.get_bank_mut(0, 0x2000, BankType::ChrRom);
+                    m.sram = c.get_bank_mut(0, 0x2000, BankType::Sram);
             }
             m
         }
@@ -243,6 +282,34 @@ impl<'a, C> Mapper2<'a, C> where C: Cartridge {
 
 impl<'a, C> Mapper for Mapper2<'a, C> where C: Cartridge {
     fn get_cart(&self) -> &Cartridge {&self.cart}
+
+    fn load(&mut self, reader: &mut Read) -> bool {
+        for v in self.prg_banks.iter_mut() {
+            let mut offset: usize = 0;
+            if !load_prefix(&mut offset, 0, reader) { return false }
+            *v = self.cart.get_bank(offset, 0x4000, BankType::PrgRom);
+        }
+        let mut offset: usize = 0;
+        if !load_prefix(&mut offset, 0, reader) { return false }
+        self.chr_bank = self.cart.get_bank_mut(offset, 0x2000, BankType::ChrRom);
+        self.cart.load(reader)
+    }
+
+    fn save(&self, writer: &mut Write) -> bool {
+        let prg_base = self.cart.get_bank(0, 0, BankType::PrgRom).as_ptr();
+        let chr_base = self.cart.get_bank(0, 0, BankType::ChrRom).as_ptr();
+        for v in self.prg_banks.iter() {
+            if !save_prefix(&(v.as_ptr() as usize - prg_base as usize),
+                            0, writer) {
+                return false
+            }
+        }
+        if !save_prefix(&(self.chr_bank.as_ptr() as usize - chr_base as usize),
+                        0, writer) {
+            return false
+        }
+        self.cart.save(writer)
+    }
 }
 
 pub struct Mapper4<'a, C> where C: Cartridge {
@@ -336,13 +403,13 @@ impl<'a, C> Mapper4<'a, C> where C: Cartridge {
     }
 
     #[inline(always)]
-    fn get_prgbank<'b>(&mut self, idx: u8) -> &'b mut [u8] {
+    fn get_prgbank<'b>(&self, idx: u8) -> &'b [u8] {
         self.cart.get_bank(0x2000 * idx as usize, 0x2000, BankType::PrgRom)
     }
 
     #[inline(always)]
     fn get_chrbank<'b>(&mut self, idx: u8) -> &'b mut [u8] {
-        self.cart.get_bank(0x400 * idx as usize, 0x400, BankType::ChrRom)
+        self.cart.get_bank_mut(0x400 * idx as usize, 0x400, BankType::ChrRom)
     }
 
     fn update_banks(&mut self) {
@@ -424,7 +491,7 @@ impl<'a, C> Mapper4<'a, C> where C: Cartridge {
                 m.get_chrbank(0)];
             {
                 let c = &mut m.cart;
-                m.sram = c.get_bank(0, 0x2000, BankType::Sram);
+                m.sram = c.get_bank_mut(0, 0x2000, BankType::Sram);
             }
             m
         }
@@ -452,5 +519,51 @@ impl<'a, C> Mapper for Mapper4<'a, C> where C: Cartridge {
                 bus.get_cpu().trigger_irq();
             }
         }
+    }
+
+    fn load(&mut self, reader: &mut Read) -> bool {
+        for v in self.prg_banks.iter_mut() {
+            let mut offset: usize = 0;
+            if !load_prefix(&mut offset, 0, reader) { return false }
+            *v = self.cart.get_bank(offset, 0x2000, BankType::PrgRom);
+        }
+        for v in self.chr_banks.iter_mut() {
+            let mut offset: usize = 0;
+            if !load_prefix(&mut offset, 0, reader) { return false }
+            *v = self.cart.get_bank_mut(offset, 0x400, BankType::ChrRom);
+        }
+        load_prefix(&mut self.chr_inv, 0, reader) &&
+        load_prefix(&mut self.prg_mode, 0, reader) &&
+        load_prefix(&mut self.reg_idx, 0, reader) &&
+        load_prefix(&mut self.regs, 0, reader) &&
+        load_prefix(&mut self.irq_reload, 0, reader) &&
+        load_prefix(&mut self.irq_counter, 0, reader) &&
+        load_prefix(&mut self.irq_enable, 0, reader) &&
+        self.cart.load(reader)
+    }
+
+    fn save(&self, writer: &mut Write) -> bool {
+        let prg_base = self.cart.get_bank(0, 0, BankType::PrgRom).as_ptr();
+        let chr_base = self.cart.get_bank(0, 0, BankType::ChrRom).as_ptr();
+        for v in self.prg_banks.iter() {
+            if !save_prefix(&(v.as_ptr() as usize - prg_base as usize),
+                            0, writer) {
+                return false
+            }
+        }
+        for v in self.chr_banks.iter() {
+            if !save_prefix(&(v.as_ptr() as usize - chr_base as usize),
+                            0, writer) {
+                return false
+            }
+        }
+        save_prefix(&self.chr_inv, 0, writer) &&
+        save_prefix(&self.prg_mode, 0, writer) &&
+        save_prefix(&self.reg_idx, 0, writer) &&
+        save_prefix(&self.regs, 0, writer) &&
+        save_prefix(&self.irq_reload, 0, writer) &&
+        save_prefix(&self.irq_counter, 0, writer) &&
+        save_prefix(&self.irq_enable, 0, writer) &&
+        self.cart.save(writer)
     }
 }

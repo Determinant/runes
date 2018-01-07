@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 #![allow(unused_macros)]
 
+use core::mem::size_of;
 use memory::{CPUMemory, VMem};
+use utils::{Read, Write, load_prefix, save_prefix};
+
 pub const CPU_FREQ: u32 = 1789773;
 
 #[macro_export]
@@ -588,7 +591,9 @@ enum IntType {
     DelayedNMI
 }
 
+#[repr(C)]
 pub struct CPU<'a> {
+    /*-- begin state --*/
     /* registers */
     a: u8,
     x: u8,
@@ -596,16 +601,21 @@ pub struct CPU<'a> {
     status: u8,
     pc: u16,
     sp: u8,
-    /* internal state */
+    /* internal latches */
     acc: bool,
     opr: u16,
     ea: u16,    /* effective address */
     imm_val: u8,
     pub cycle: u32,
-    //pub elapsed: u32,
     int: Option<IntType>,
+    /*-- end state --*/
+
+    /*-- begin sub-state --*/
     pub mem: CPUMemory<'a>,
+    /*-- end sub-state --*/
 }
+
+const CPU_IGNORED_SIZE: usize = size_of::<CPUMemory>();
 
 macro_rules! make_int {
     ($f:ident, $v: expr) => (
@@ -654,8 +664,17 @@ impl<'a> CPU<'a> {
             int: None,
             acc: false,
             mem,
-            //elapsed: 0
         }
+    }
+
+    pub fn load(&mut self, reader: &mut Read) -> bool {
+        load_prefix(self, CPU_IGNORED_SIZE, reader) &&
+        self.mem.load(reader)
+    }
+
+    pub fn save(&self, writer: &mut Write) -> bool {
+        save_prefix(self, CPU_IGNORED_SIZE, writer) &&
+        self.mem.save(writer)
     }
 
     pub fn powerup(&mut self) {
@@ -693,8 +712,7 @@ impl<'a> CPU<'a> {
     }
 
     pub fn tick(&mut self) {
-        self.cycle -= 1;
-        //self.elapsed += 1;
+        self.cycle -= 1
     }
 
     pub fn reset(&mut self) {

@@ -1,11 +1,15 @@
 #![allow(dead_code)]
+use utils::{Read, Write};
 
 pub trait Controller {
     fn read(&self) -> u8;
     fn write(&self, data: u8);
+    fn load(&mut self, reader: &mut Read) -> bool;
+    fn save(&self, writer: &mut Write) -> bool;
 }
 
 pub mod stdctl {
+    use utils::{Read, Write, load_prefix, save_prefix};
     use core::cell::Cell;
     use controller::Controller;
     pub const A: u8 = 1 << 0;
@@ -18,6 +22,7 @@ pub mod stdctl {
     pub const RIGHT: u8 = 1 << 7;
     pub const NULL: u8 = 0;
     
+    #[repr(C)]
     pub struct Joystick {
         strobe: Cell<bool>,
         reg: Cell<u8>,
@@ -47,6 +52,14 @@ pub mod stdctl {
         fn write(&self, data: u8) {
             self.strobe.set(data & 1 == 1);
             self.reg.set(self.back_reg.get());
+        }
+
+        fn load(&mut self, reader: &mut Read) -> bool {
+            load_prefix(self, 0, reader)
+        }
+
+        fn save(&self, writer: &mut Write) -> bool {
+            save_prefix(self, 0, writer)
         }
     }
 }

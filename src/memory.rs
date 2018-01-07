@@ -1,26 +1,41 @@
 #![allow(dead_code)]
 use ppu::PPU;
-use apu::{APU, Sampler};
+use apu::APU;
+use utils::{Sampler, Read, Write, load_prefix, save_prefix};
 use mos6502::{CPU, CPU_FREQ};
 use cartridge::MirrorType;
 use mapper::RefMapper;
 use controller::Controller;
 use core::cell::{RefCell, Cell};
 use core::ptr::null_mut;
+use core::mem::size_of;
 
 pub trait VMem {
     fn read(&self, addr: u16) -> u8;
     fn write(&mut self, addr: u16, data: u8);
 }
 
+#[repr(C)]
 pub struct CPUBus<'a> {
+    /*-- begin state --*/
+    nmi_after_tick: Cell<bool>,
+    cpu_stall: Cell<u32>,
+    /*-- end state --*/
+
+    /*-- begin sub-state --*/
+    ppu_sampler: RefCell<Sampler>,
+    /*-- end sub-state --*/
+
     cpu: *mut CPU<'a>,
     ppu: *mut PPU<'a>,
     apu: *mut APU<'a>,
-    ppu_sampler: RefCell<Sampler>,
-    nmi_after_tick: Cell<bool>,
-    cpu_stall: Cell<u32>
 }
+
+const CPUBUS_IGNORED_SIZE: usize =
+    size_of::<RefCell<Sampler>>() +
+    size_of::<*mut CPU>() +
+    size_of::<*mut PPU>() +
+    size_of::<*mut APU>();
 
 impl<'a> CPUBus<'a> {
     pub fn new() -> Self {
@@ -31,6 +46,16 @@ impl<'a> CPUBus<'a> {
                 nmi_after_tick: Cell::new(false),
                 cpu_stall: Cell::new(0)
             }
+    }
+
+    pub fn load(&mut self, reader: &mut Read) -> bool {
+        load_prefix(self, CPUBUS_IGNORED_SIZE, reader) &&
+        self.ppu_sampler.borrow_mut().load(reader)
+    }
+
+    pub fn save(&self, writer: &mut Write) -> bool {
+        save_prefix(self, CPUBUS_IGNORED_SIZE, writer) &&
+        self.ppu_sampler.borrow().save(writer)
     }
 
     pub fn attach(&mut self, cpu: *mut CPU<'a>,
@@ -80,28 +105,50 @@ impl<'a> CPUBus<'a> {
         }
         self.nmi_after_tick.set(nmi_after_tick);
         //println!("tick {} {}", ppu.scanline, ppu.cycle);
-        if let (true, _) = self.ppu_sampler.borrow_mut().tick() {
+        if self.ppu_sampler.borrow_mut().tick() {
             ppu.scr.frame()
         }
     }
 }
 
+#[repr(C)]
 pub struct CPUMemory<'a> {
+    /*-- begin state --*/
     sram: [u8; 2048],
+    /*-- end state --*/
+
+    /*-- begin sub-state --*/
     pub bus: CPUBus<'a>,
+    /*-- end sub-state --*/
+
     mapper: &'a RefMapper<'a>,
     ctl1: Option<&'a Controller>,
     ctl2: Option<&'a Controller>
 }
 
+const CPUMEM_IGNORED_SIZE: usize =
+    size_of::<CPUBus>() +
+    size_of::<&RefMapper>() +
+    size_of::<Option<&Controller>>() +
+    size_of::<Option<&Controller>>();
+
 impl<'a> CPUMemory<'a> {
-    pub fn new(
-               mapper: &'a RefMapper<'a>,
+    pub fn new(mapper: &'a RefMapper<'a>,
                ctl1: Option<&'a Controller>,
                ctl2: Option<&'a Controller>) -> Self {
         CPUMemory{sram: [0; 2048],
                   bus: CPUBus::new(),
                   mapper, ctl1, ctl2}
+    }
+
+    pub fn load(&mut self, reader: &mut Read) -> bool {
+        load_prefix(self, CPUMEM_IGNORED_SIZE, reader) &&
+        self.bus.load(reader)
+    }
+
+    pub fn save(&self, writer: &mut Write) -> bool {
+        save_prefix(self, CPUMEM_IGNORED_SIZE, writer) &&
+        self.bus.save(writer)
     }
 
     pub fn get_bus(&'a self) -> &'a CPUBus<'a> {
@@ -225,18 +272,33 @@ impl<'a> VMem for CPUMemory<'a> {
     }
 }
 
+#[repr(C)]
 pub struct PPUMemory<'a> {
+    /*-- begin state -- */
     nametable: [u8; 0x800],
     palette: [u8; 0x20],
+    /*-- end state --*/
+
     mapper: &'a RefMapper<'a>
 }
+
+const PPUMEM_IGNORED_SIZE: usize = size_of::<&RefMapper>();
 
 impl<'a> PPUMemory<'a> {
     pub fn new(mapper: &'a RefMapper<'a>) -> Self {
         PPUMemory{
             nametable: [0; 0x800],
             palette: [0; 0x20],
-            mapper}
+            mapper
+        }
+    }
+
+    pub fn load(&mut self, reader: &mut Read) -> bool {
+        load_prefix(self, PPUMEM_IGNORED_SIZE, reader)
+    }
+
+    pub fn save(&self, writer: &mut Write) -> bool {
+        save_prefix(self, PPUMEM_IGNORED_SIZE, writer)
     }
 }
 
