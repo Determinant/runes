@@ -1,5 +1,4 @@
-use core::intrinsics::transmute;
-use core::mem::size_of;
+use core::mem::{transmute, size_of};
 use core::slice::{from_raw_parts_mut, from_raw_parts};
 
 pub struct Sampler {

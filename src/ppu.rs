@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 use memory::{VMem, PPUMemory, CPUBus};
-use core::intrinsics::transmute;
-use core::mem::size_of;
+use core::mem::{size_of, transmute};
 use utils::{Read, Write, load_prefix, save_prefix};
 
 pub trait Screen {
@@ -62,9 +61,10 @@ pub struct PPU<'a> {
     pub scr: &'a mut Screen,
 }
 
-const PPU_IGNORED_SIZE: usize =
-    size_of::<PPUMemory>() +
-    size_of::<&mut Screen>();
+macro_rules! PPU_IGNORED_SIZE {
+    () => (size_of::<PPUMemory>() +
+            size_of::<&mut Screen>())
+}
 
 impl<'a> PPU<'a> {
     #[inline]
@@ -491,12 +491,12 @@ impl<'a> PPU<'a> {
     }
 
     pub fn load(&mut self, reader: &mut Read) -> bool {
-        load_prefix(self, PPU_IGNORED_SIZE, reader) &&
+        load_prefix(self, PPU_IGNORED_SIZE!(), reader) &&
         self.mem.load(reader)
     }
 
     pub fn save(&self, writer: &mut Write) -> bool {
-        save_prefix(self, PPU_IGNORED_SIZE, writer) &&
+        save_prefix(self, PPU_IGNORED_SIZE!(), writer) &&
         self.mem.save(writer)
     }
 

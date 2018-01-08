@@ -4,7 +4,7 @@ extern crate core;
 use std::fs::File;
 use std::sync::{Mutex, Condvar};
 use std::io::{Read, Write};
-use std::intrinsics::transmute;
+use std::mem::transmute;
 use std::process::exit;
 use std::cell::Cell;
 

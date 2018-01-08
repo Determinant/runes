@@ -1,5 +1,4 @@
 #![no_std]
-#![feature(const_size_of)]
 //extern crate core;
 mod utils;
 mod memory;

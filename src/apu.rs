@@ -720,18 +720,19 @@ pub struct APU<'a> {
     spkr: &'a mut Speaker,
 }
 
-const APU_IGNORED_SIZE: usize =
-    size_of::<Pulse>() +
-    size_of::<Pulse>() +
-    size_of::<Triangle>() +
-    size_of::<Noise>() +
-    size_of::<DMC>() +
-    size_of::<LPFilter>() +
-    size_of::<HPFilter>() +
-    size_of::<HPFilter>() +
-    size_of::<Sampler>() +
-    size_of::<Sampler>() +
-    size_of::<&Speaker>();
+macro_rules! APU_IGNORED_SIZE {
+    () => (size_of::<Pulse>() +
+        size_of::<Pulse>() +
+        size_of::<Triangle>() +
+        size_of::<Noise>() +
+        size_of::<DMC>() +
+        size_of::<LPFilter>() +
+        size_of::<HPFilter>() +
+        size_of::<HPFilter>() +
+        size_of::<Sampler>() +
+        size_of::<Sampler>() +
+        size_of::<&Speaker>())
+}
 
 impl<'a> APU<'a> {
     pub fn new(spkr: &'a mut Speaker) -> Self {
@@ -752,7 +753,7 @@ impl<'a> APU<'a> {
     }
 
     pub fn load(&mut self, reader: &mut Read) -> bool {
-        load_prefix(self, APU_IGNORED_SIZE, reader) &&
+        load_prefix(self, APU_IGNORED_SIZE!(), reader) &&
         self.pulse1.load(reader) &&
         self.pulse2.load(reader) &&
         self.triangle.load(reader) &&
@@ -766,7 +767,7 @@ impl<'a> APU<'a> {
     }
 
     pub fn save(&self, writer: &mut Write) -> bool {
-        save_prefix(self, APU_IGNORED_SIZE, writer) &&
+        save_prefix(self, APU_IGNORED_SIZE!(), writer) &&
         self.pulse1.save(writer) &&
         self.pulse2.save(writer) &&
         self.triangle.save(writer) &&

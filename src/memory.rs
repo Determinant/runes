@@ -31,11 +31,12 @@ pub struct CPUBus<'a> {
     apu: *mut APU<'a>,
 }
 
-const CPUBUS_IGNORED_SIZE: usize =
-    size_of::<RefCell<Sampler>>() +
-    size_of::<*mut CPU>() +
-    size_of::<*mut PPU>() +
-    size_of::<*mut APU>();
+macro_rules! CPUBUS_IGNORED_SIZE {
+    () => (size_of::<RefCell<Sampler>>() +
+            size_of::<*mut CPU>() +
+            size_of::<*mut PPU>() +
+            size_of::<*mut APU>())
+}
 
 impl<'a> CPUBus<'a> {
     pub fn new() -> Self {
@@ -49,12 +50,12 @@ impl<'a> CPUBus<'a> {
     }
 
     pub fn load(&mut self, reader: &mut Read) -> bool {
-        load_prefix(self, CPUBUS_IGNORED_SIZE, reader) &&
+        load_prefix(self, CPUBUS_IGNORED_SIZE!(), reader) &&
         self.ppu_sampler.borrow_mut().load(reader)
     }
 
     pub fn save(&self, writer: &mut Write) -> bool {
-        save_prefix(self, CPUBUS_IGNORED_SIZE, writer) &&
+        save_prefix(self, CPUBUS_IGNORED_SIZE!(), writer) &&
         self.ppu_sampler.borrow().save(writer)
     }
 
@@ -126,11 +127,12 @@ pub struct CPUMemory<'a> {
     ctl2: Option<&'a Controller>
 }
 
-const CPUMEM_IGNORED_SIZE: usize =
-    size_of::<CPUBus>() +
-    size_of::<&RefMapper>() +
-    size_of::<Option<&Controller>>() +
-    size_of::<Option<&Controller>>();
+macro_rules! CPUMEM_IGNORED_SIZE {
+    () => (size_of::<CPUBus>() +
+            size_of::<&RefMapper>() +
+            size_of::<Option<&Controller>>() +
+            size_of::<Option<&Controller>>())
+}
 
 impl<'a> CPUMemory<'a> {
     pub fn new(mapper: &'a RefMapper<'a>,
@@ -142,12 +144,12 @@ impl<'a> CPUMemory<'a> {
     }
 
     pub fn load(&mut self, reader: &mut Read) -> bool {
-        load_prefix(self, CPUMEM_IGNORED_SIZE, reader) &&
+        load_prefix(self, CPUMEM_IGNORED_SIZE!(), reader) &&
         self.bus.load(reader)
     }
 
     pub fn save(&self, writer: &mut Write) -> bool {
-        save_prefix(self, CPUMEM_IGNORED_SIZE, writer) &&
+        save_prefix(self, CPUMEM_IGNORED_SIZE!(), writer) &&
         self.bus.save(writer)
     }
 
@@ -282,7 +284,9 @@ pub struct PPUMemory<'a> {
     mapper: &'a RefMapper<'a>
 }
 
-const PPUMEM_IGNORED_SIZE: usize = size_of::<&RefMapper>();
+macro_rules! PPUMEM_IGNORED_SIZE {
+    () => (size_of::<&RefMapper>())
+}
 
 impl<'a> PPUMemory<'a> {
     pub fn new(mapper: &'a RefMapper<'a>) -> Self {
@@ -294,11 +298,11 @@ impl<'a> PPUMemory<'a> {
     }
 
     pub fn load(&mut self, reader: &mut Read) -> bool {
-        load_prefix(self, PPUMEM_IGNORED_SIZE, reader)
+        load_prefix(self, PPUMEM_IGNORED_SIZE!(), reader)
     }
 
     pub fn save(&self, writer: &mut Write) -> bool {
-        save_prefix(self, PPUMEM_IGNORED_SIZE, writer)
+        save_prefix(self, PPUMEM_IGNORED_SIZE!(), writer)
     }
 }
 

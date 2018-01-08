@@ -615,7 +615,9 @@ pub struct CPU<'a> {
     /*-- end sub-state --*/
 }
 
-const CPU_IGNORED_SIZE: usize = size_of::<CPUMemory>();
+macro_rules! CPU_IGNORED_SIZE {
+    () => (size_of::<CPUMemory>())
+}
 
 macro_rules! make_int {
     ($f:ident, $v: expr) => (
@@ -668,12 +670,12 @@ impl<'a> CPU<'a> {
     }
 
     pub fn load(&mut self, reader: &mut Read) -> bool {
-        load_prefix(self, CPU_IGNORED_SIZE, reader) &&
+        load_prefix(self, CPU_IGNORED_SIZE!(), reader) &&
         self.mem.load(reader)
     }
 
     pub fn save(&self, writer: &mut Write) -> bool {
-        save_prefix(self, CPU_IGNORED_SIZE, writer) &&
+        save_prefix(self, CPU_IGNORED_SIZE!(), writer) &&
         self.mem.save(writer)
     }
 
