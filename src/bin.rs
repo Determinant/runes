@@ -1,4 +1,3 @@
-#![feature(const_size_of)]
 extern crate core;
 
 use std::fs::File;
