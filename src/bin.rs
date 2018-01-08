@@ -66,6 +66,22 @@ impl SimpleCart {
                mirror_type: MirrorType) -> Self {
         SimpleCart{chr_rom, prg_rom, sram, mirror_type}
     }
+
+    fn load_vec(vec: &mut Vec<u8>, reader: &mut utils::Read) -> bool {
+        let len = vec.len();
+        match reader.read(vec) {
+            Some(x) => x == len,
+            None => false
+        }
+    }
+
+    fn save_vec(vec: &Vec<u8>, writer: &mut utils::Write) -> bool {
+        let len = vec.len();
+        match writer.write(vec) {
+            Some(x) => x == len,
+            None => false
+        }
+    }
 }
 
 impl Cartridge for SimpleCart {
@@ -100,21 +116,23 @@ impl Cartridge for SimpleCart {
     fn set_mirror_type(&mut self, mt: MirrorType) {self.mirror_type = mt}
 
     fn load(&mut self, reader: &mut utils::Read) -> bool {
-        let len = self.sram.len();
-        (match reader.read(&mut self.sram) {
-            Some(x) => x == len,
-            None => false
-        }) &&
+        self.load_sram(reader) &&
+        SimpleCart::load_vec(&mut self.chr_rom, reader) &&
         utils::load_prefix(&mut self.mirror_type, 0, reader)
     }
 
     fn save(&self, writer: &mut utils::Write) -> bool {
-        let len = self.sram.len();
-        (match writer.write(&self.sram) {
-            Some(x) => x == len,
-            None => false
-        }) &&
+        self.save_sram(writer) &&
+        SimpleCart::save_vec(&self.chr_rom, writer) &&
         utils::save_prefix(&self.mirror_type, 0, writer)
+    }
+
+    fn load_sram(&mut self, reader: &mut utils::Read) -> bool {
+        SimpleCart::load_vec(&mut self.sram, reader)
+    }
+
+    fn save_sram(&self, writer: &mut utils::Write) -> bool {
+        SimpleCart::save_vec(&self.sram, writer)
     }
 }
 
@@ -387,39 +405,74 @@ fn print_cpu_trace(cpu: &CPU) {
 }
 
 fn main() {
-    let matches = App::new("RuNES")
-                    .version("0.1.5")
-                    .author("Ted Yin <tederminant@gmail.com>")
-                    .about("A Rust NES emulator")
-                    .arg(Arg::with_name("scale")
-                         .short("x")
-                         .long("scale")
-                         .required(false)
-                         .takes_value(true))
-                    .arg(Arg::with_name("full")
-                         .short("f")
-                         .long("full")
-                         .required(false)
-                         .takes_value(false))
-                    .arg(Arg::with_name("INPUT")
-                         .help("the iNES ROM file")
-                         .required(true)
-                         .index(1))
-                    .arg(Arg::with_name("load")
-                         .short("l")
-                         .long("load")
-                         .required(false)
-                         .takes_value(true))
-                    .get_matches();
+    let matches =
+        App::new("RuNES")
+            .version("0.1")
+            .author("Ted Yin <tederminant@gmail.com>")
+            .about("A Rust NES emulator")
+            .arg(Arg::with_name("scale")
+                 .short("x")
+                 .long("scale")
+                 .help("Set pixel scaling factor (3 by default)")
+                 .required(false)
+                 .takes_value(true))
+            .arg(Arg::with_name("full")
+                 .help("Enable the entire PPU rendering area")
+                 .short("f")
+                 .long("full")
+                 .required(false)
+                 .takes_value(false))
+            .arg(Arg::with_name("INPUT")
+                 .help("iNES ROM file")
+                 .required(true)
+                 .index(1))
+            .arg(Arg::with_name("load")
+                 .help("Load from specified machine state file")
+                 .short("l")
+                 .long("load")
+                 .required(false)
+                 .takes_value(true))
+            .arg(Arg::with_name("save")
+                 .help("Save to specified machine state file when exit")
+                 .short("s")
+                 .long("save")
+                 .required(false)
+                 .takes_value(true))
+            .arg(Arg::with_name("load-sram")
+                 .help("Load from specified sram file")
+                 .short("L")
+                 .long("load-sram")
+                 .required(false)
+                 .takes_value(true))
+            .arg(Arg::with_name("save-sram")
+                 .help("Save to specified sram file when exit")
+                 .short("S")
+                 .long("save-sram")
+                 .required(false)
+                 .takes_value(true))
+            .arg(Arg::with_name("no-state")
+                 .help("Power up the emulator with initial state")
+                 .short("n")
+                 .long("no-state")
+                 .required(false)
+                 .takes_value(false))
+            .get_matches();
 
     let scale = std::cmp::min(8,
                     std::cmp::max(1,
                         value_t!(matches, "scale", u32).unwrap_or(3)));
     let full = matches.is_present("full");
 
-    /* load and parse iNES file */
     let fname = matches.value_of("INPUT").unwrap();
-    let lname = matches.value_of("load");
+    let load_state_name = matches.value_of("load");
+    let save_state_name = matches.value_of("save");
+    let save_sram_name = matches.value_of("save-sram");
+    let load_sram_name = matches.value_of("load-sram");
+    let default_state_name = fname.to_string() + ".runes";
+    let default_sram_name = fname.to_string() + ".runes_sram";
+    let no_state = matches.is_present("no-state");
+
+    /* load and parse iNES file */
     let mut file = File::open(fname).unwrap();
     let mut rheader = [0; 16];
     file.read(&mut rheader[..]).unwrap();
@@ -493,19 +546,38 @@ fn main() {
     let mut apu = APU::new(&mut spkr);
     let cpu_ptr = &mut cpu as *mut CPU;
     cpu.mem.bus.attach(cpu_ptr, &mut ppu, &mut apu);
-    match lname {
-        Some(s) => {
-            let mut file = FileIO(File::open(s).unwrap());
+    let load_state = !no_state && match match load_state_name {
+        Some(s) => Some(File::open(s).unwrap()),
+        None => match File::open(&default_state_name) {
+            Ok(file) => Some(file),
+            Err(_) => None
+        }
+    } {
+        Some(f) => {
+            let mut file = FileIO(f);
             cpu.load(&mut file);
             ppu.load(&mut file);
             apu.load(&mut file);
             mapper.get_mut().load(&mut file);
-            debug_assert!(cpu.cycle == 0);
+            true
         },
-        None => {
-            cpu.powerup()
+        None => false
+    };
+
+    if !load_state {
+        if let Some(f) = match load_sram_name {
+            Some(s) => Some(File::open(s).unwrap()),
+            None => match File::open(&default_sram_name) {
+                Ok(file) => Some(file),
+                Err(_) => None
+            }
+        } {
+            let mut file = FileIO(f);
+            mapper.get_mut().get_cart_mut().load_sram(&mut file);
         }
+        cpu.powerup()
     }
+
     device.resume();
     loop {
         /* consume the leftover cycles from the last instruction */
@@ -514,11 +586,21 @@ fn main() {
         }
         if exit_flag.get() {
             {
-                let mut file = FileIO(File::create("t.dat").unwrap());
+                let mut file = FileIO(File::create(match save_state_name {
+                    Some(s) => s.to_string(),
+                    None => default_state_name
+                }).unwrap());
                 cpu.save(&mut file);
                 ppu.save(&mut file);
                 apu.save(&mut file);
                 mapper.save(&mut file);
+            }
+            {
+                let mut file = FileIO(File::create(match save_sram_name {
+                    Some(s) => s.to_string(),
+                    None => default_sram_name
+                }).unwrap());
+                mapper.get_cart().save_sram(&mut file);
             }
             exit(0);
         }

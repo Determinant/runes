@@ -24,4 +24,6 @@ pub trait Cartridge {
     #[inline(always)] fn set_mirror_type(&mut self, mt: MirrorType);
     fn load(&mut self, reader: &mut Read) -> bool;
     fn save(&self, writer: &mut Write) -> bool;
+    fn load_sram(&mut self, reader: &mut Read) -> bool;
+    fn save_sram(&self, writer: &mut Write) -> bool;
 }

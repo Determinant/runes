@@ -7,6 +7,7 @@ use utils::{Read, Write, load_prefix, save_prefix};
 
 pub trait Mapper : VMem {
     fn get_cart(&self) -> &Cartridge;
+    fn get_cart_mut(&mut self) -> &mut Cartridge;
     fn tick(&mut self, _bus: &CPUBus) {}
     fn load(&mut self, reader: &mut Read) -> bool;
     fn save(&self, writer: &mut Write) -> bool;
@@ -35,6 +36,7 @@ impl<'a> core::ops::Deref for RefMapper<'a> {
     }
 }
 
+#[repr(C)]
 pub struct Mapper1<'a, C> where C: Cartridge {
     cart: C,
     prg_banks: [&'a [u8]; 2],
@@ -177,6 +179,7 @@ impl<'a, C> Mapper1<'a, C> where C: Cartridge {
 
 impl<'a, C> Mapper for Mapper1<'a, C> where C: Cartridge {
     fn get_cart(&self) -> &Cartridge {&self.cart}
+    fn get_cart_mut(&mut self) -> &mut Cartridge {&mut self.cart}
 
     fn load(&mut self, reader: &mut Read) -> bool {
         for v in self.prg_banks.iter_mut() {
@@ -215,6 +218,7 @@ impl<'a, C> Mapper for Mapper1<'a, C> where C: Cartridge {
     }
 }
 
+#[repr(C)]
 pub struct Mapper2<'a, C> where C: Cartridge {
     cart: C,
     prg_banks: [&'a [u8]; 2],
@@ -282,6 +286,7 @@ impl<'a, C> Mapper2<'a, C> where C: Cartridge {
 
 impl<'a, C> Mapper for Mapper2<'a, C> where C: Cartridge {
     fn get_cart(&self) -> &Cartridge {&self.cart}
+    fn get_cart_mut(&mut self) -> &mut Cartridge {&mut self.cart}
 
     fn load(&mut self, reader: &mut Read) -> bool {
         for v in self.prg_banks.iter_mut() {
@@ -312,6 +317,7 @@ impl<'a, C> Mapper for Mapper2<'a, C> where C: Cartridge {
     }
 }
 
+#[repr(C)]
 pub struct Mapper4<'a, C> where C: Cartridge {
     cart: C,
     prg_banks: [&'a [u8]; 4],
@@ -500,6 +506,8 @@ impl<'a, C> Mapper4<'a, C> where C: Cartridge {
 
 impl<'a, C> Mapper for Mapper4<'a, C> where C: Cartridge {
     fn get_cart(&self) -> &Cartridge {&self.cart}
+    fn get_cart_mut(&mut self) -> &mut Cartridge {&mut self.cart}
+
     fn tick(&mut self, bus: &CPUBus) {
         let ppu = bus.get_ppu();
         if ppu.cycle != 260 {
