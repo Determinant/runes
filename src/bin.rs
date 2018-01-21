@@ -5,7 +5,7 @@ use std::sync::{Mutex, Condvar};
 use std::io::{Read, Write};
 use std::mem::transmute;
 use std::process::exit;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 extern crate sdl2;
 #[macro_use] extern crate clap;
@@ -30,7 +30,7 @@ use ppu::PPU;
 use apu::APU;
 use memory::{CPUMemory, PPUMemory};
 use cartridge::{BankType, MirrorType, Cartridge};
-use controller::stdctl;
+use controller::{InputPoller, stdctl};
 
 const RGB_COLORS: [u32; 64] = [
     0x666666, 0x002a88, 0x1412a7, 0x3b00a4, 0x5c007e, 0x6e0040, 0x6c0600, 0x561d00,
@@ -155,17 +155,6 @@ impl utils::Write for FileIO {
     }
 }
 
-struct SDLWindow<'a> {
-    canvas: sdl2::render::WindowCanvas,
-    events: sdl2::EventPump,
-    frame_buffer: [u8; FB_SIZE],
-    texture: sdl2::render::Texture,
-    p1_button_state: u8,
-    p1_ctl: &'a stdctl::Joystick,
-    p1_keymap: [u8; 256],
-    copy_area: Option<Rect>,
-    exit_flag: &'a Cell<bool>
-}
 
 macro_rules! gen_keymap {
     ($tab: ident, [$($x: expr, $y: expr), *]) => {
@@ -173,14 +162,85 @@ macro_rules! gen_keymap {
     };
 }
 
-impl<'a> SDLWindow<'a> {
-    fn new(sdl_context: &'a sdl2::Sdl,
-           p1_ctl: &'a stdctl::Joystick,
-           pixel_scale: u32,
-           full_screen: bool,
-           exit_flag: &'a Cell<bool>) -> Self {
+struct SDLEventPoller {
+    events: RefCell<sdl2::EventPump>,
+    p1_button_state: Cell<u8>,
+    keymap: [u8; 256],
+    exit_flag: Cell<bool>
+}
+
+impl SDLEventPoller {
+    fn new(_events: sdl2::EventPump) -> Self {
+        let mut res = SDLEventPoller {
+            events: RefCell::new(_events),
+            p1_button_state: Cell::new(0),
+            exit_flag: Cell::new(false),
+            keymap: [stdctl::NULL; 256]
+        };
         use Keycode::*;
-        let video_subsystem = sdl_context.video().unwrap();
+        {
+            let keymap = &mut res.keymap;
+            gen_keymap!(keymap, [I, stdctl::UP,
+                                 K, stdctl::DOWN,
+                                 J, stdctl::LEFT,
+                                 L, stdctl::RIGHT,
+                                 Z, stdctl::A,
+                                 X, stdctl::B,
+                                 Return, stdctl::START,
+                                 S, stdctl::SELECT,
+                                 Up, stdctl::UP,
+                                 Down, stdctl::DOWN,
+                                 Left, stdctl::LEFT,
+                                 Right, stdctl::RIGHT
+                                 ]);
+        }
+        res
+    }
+
+    #[inline]
+    fn is_exiting(&self) -> bool {
+        self.exit_flag.get()
+    }
+}
+
+impl InputPoller for SDLEventPoller {
+    #[inline]
+    fn poll(&self) -> u8 {
+        use Keycode::*;
+        let keymap = &self.keymap;
+        let mut ns = self.p1_button_state.get();
+        for event in self.events.borrow_mut().poll_iter() {
+            match event {
+                Event::Quit {..} | Event::KeyDown { keycode: Some(Escape), .. } => {
+                    self.exit_flag.set(true)
+                },
+                Event::KeyDown { keycode: Some(c), .. } => {
+                    ns |= keymap[(c as usize) & 0xff]
+                },
+                Event::KeyUp { keycode: Some(c), .. } => {
+                    ns &= !keymap[(c as usize) & 0xff]
+                },
+                _ => ()
+            }
+        }
+        self.p1_button_state.set(ns);
+        ns
+    }
+}
+
+struct SDLWindow<'a> {
+    canvas: sdl2::render::WindowCanvas,
+    frame_buffer: [u8; FB_SIZE],
+    texture: sdl2::render::Texture,
+    copy_area: Option<Rect>,
+    event: &'a SDLEventPoller
+}
+
+impl<'a> SDLWindow<'a> {
+    fn new(video_subsystem: &sdl2::VideoSubsystem,
+           event: &'a SDLEventPoller,
+           pixel_scale: u32,
+           full_screen: bool) -> Self {
         let mut actual_height = PIX_HEIGHT * pixel_scale;
         let actual_width = PIX_WIDTH * pixel_scale;
         let mut copy_area = None;
@@ -201,57 +261,15 @@ impl<'a> SDLWindow<'a> {
         canvas.set_draw_color(sdl2::pixels::Color::RGB(255, 255, 255));
         canvas.clear();
         canvas.present();
-        let mut res = SDLWindow {
+        SDLWindow {
             canvas,
-            events: sdl_context.event_pump().unwrap(),
             frame_buffer: [0; FB_SIZE],
             texture: texture_creator.create_texture_streaming(
                         sdl2::pixels::PixelFormatEnum::RGB24,
                         PIX_WIDTH, PIX_HEIGHT).unwrap(),
-            p1_button_state: 0,
-            p1_ctl, p1_keymap: [stdctl::NULL; 256],
-            copy_area, exit_flag
-        };
-        {
-            let keymap = &mut res.p1_keymap;
-            gen_keymap!(keymap, [I, stdctl::UP,
-                                 K, stdctl::DOWN,
-                                 J, stdctl::LEFT,
-                                 L, stdctl::RIGHT,
-                                 Z, stdctl::A,
-                                 X, stdctl::B,
-                                 Return, stdctl::START,
-                                 S, stdctl::SELECT,
-                                 Up, stdctl::UP,
-                                 Down, stdctl::DOWN,
-                                 Left, stdctl::LEFT,
-                                 Right, stdctl::RIGHT
-                                 ]);
+            event,
+            copy_area
         }
-        res
-    }
-
-    #[inline]
-    fn poll(&mut self) -> bool {
-        use Keycode::*;
-        let p1_keymap = &self.p1_keymap;
-        for event in self.events.poll_iter() {
-            match event {
-                Event::Quit {..} | Event::KeyDown { keycode: Some(Escape), .. } => {
-                    return true;
-                },
-                Event::KeyDown { keycode: Some(c), .. } => {
-                    self.p1_button_state |= p1_keymap[(c as usize) & 0xff];
-                    self.p1_ctl.set(self.p1_button_state)
-                },
-                Event::KeyUp { keycode: Some(c), .. } => {
-                    self.p1_button_state &= !p1_keymap[(c as usize) & 0xff];
-                    self.p1_ctl.set(self.p1_button_state)
-                },
-                _ => ()
-            }
-        }
-        false
     }
 }
 
@@ -280,11 +298,7 @@ impl<'a> ppu::Screen for SDLWindow<'a> {
         self.canvas.clear();
         self.canvas.copy(&self.texture, self.copy_area, None).unwrap();
         self.canvas.present();
-        if self.poll() {
-            /*
-            */
-            self.exit_flag.set(true)
-        }
+        self.event.poll();
     }
 }
 
@@ -511,8 +525,10 @@ fn main() {
     println!("read prg {}", file.read(&mut prg_rom[..]).unwrap());
     println!("read chr {}", file.read(&mut chr_rom[..]).unwrap());
 
-    /* audio */
+    /* SDL setup */
     let sdl_context = sdl2::init().unwrap();
+    let event = SDLEventPoller::new(sdl_context.event_pump().unwrap());
+    let video_subsystem = sdl_context.video().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();
     let audio_sync = AudioSync { time_barrier: Condvar::new(),
                                  buffer: Mutex::new((CircularBuffer::new(),
@@ -526,12 +542,10 @@ fn main() {
     let device = audio_subsystem.open_playback(None, &desired_spec, |_| {
         SDLAudioPlayback(&audio_sync)
     }).unwrap();
-    /* P1 controller */
-    let p1ctl = stdctl::Joystick::new();
+    let mut win = SDLWindow::new(&video_subsystem, &event, /*&p1ctl, */ scale, full);
+
     /* construct mapper from cartridge data */
     let cart = SimpleCart::new(chr_rom, prg_rom, sram, mirror);
-    let exit_flag = Cell::new(false);
-    let mut win = Box::new(SDLWindow::new(&sdl_context, &p1ctl, scale, full, &exit_flag));
     let mut m: Box<mapper::Mapper> = match mapper_id {
         0 | 2 => Box::new(mapper::Mapper2::new(cart)),
         1 => Box::new(mapper::Mapper1::new(cart)),
@@ -539,9 +553,12 @@ fn main() {
         _ => panic!("unsupported mapper {}", mapper_id)
     };
 
+    /* P1 controller */
+    let p1ctl = stdctl::Joystick::new(&event);
+
     let mapper = mapper::RefMapper::new(&mut (*m) as &mut mapper::Mapper);
     let mut cpu = CPU::new(CPUMemory::new(&mapper, Some(&p1ctl), None));
-    let mut ppu = PPU::new(PPUMemory::new(&mapper), &mut (*win));
+    let mut ppu = PPU::new(PPUMemory::new(&mapper), &mut win);
     let mut apu = APU::new(&mut spkr);
     let cpu_ptr = &mut cpu as *mut CPU;
     cpu.mem.bus.attach(cpu_ptr, &mut ppu, &mut apu);
@@ -583,7 +600,8 @@ fn main() {
         while cpu.cycle > 0 {
             cpu.mem.bus.tick()
         }
-        if exit_flag.get() {
+
+        if event.is_exiting() {
             {
                 let mut file = FileIO(File::create(match save_state_name {
                     Some(s) => s.to_string(),

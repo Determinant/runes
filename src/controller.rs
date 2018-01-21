@@ -8,10 +8,14 @@ pub trait Controller {
     fn save(&self, writer: &mut Write) -> bool;
 }
 
+pub trait InputPoller {
+    fn poll(&self) -> u8;
+}
+
 pub mod stdctl {
     use utils::{Read, Write, load_prefix, save_prefix};
     use core::cell::Cell;
-    use controller::Controller;
+    use controller::{Controller, InputPoller};
     pub const A: u8 = 1 << 0;
     pub const B: u8 = 1 << 1;
     pub const SELECT: u8 = 1 << 2;
@@ -23,35 +27,39 @@ pub mod stdctl {
     pub const NULL: u8 = 0;
     
     #[repr(C)]
-    pub struct Joystick {
+    pub struct Joystick<'a> {
         strobe: Cell<bool>,
         reg: Cell<u8>,
-        back_reg: Cell<u8>
+        poller: &'a InputPoller,
     }
 
-    impl Joystick {
-        pub fn new() -> Self {
-            Joystick{reg: Cell::new(0), strobe: Cell::new(false), back_reg: Cell::new(0)}
-        }
-
-        pub fn set(&self, buttons: u8) {
-            self.reg.set(buttons);
-            self.back_reg.set(buttons);
-        }
-    }
-
-    impl Controller for Joystick {
-        fn read(&self) -> u8 {
-            let res = self.reg.get() & 1;
-            if !self.strobe.get() {
-                self.reg.set(self.reg.get() >> 1);
+    impl<'a> Joystick<'a> {
+        pub fn new(poller: &'a InputPoller) -> Self {
+            Joystick{
+                reg: Cell::new(0),
+                strobe: Cell::new(false),
+                poller
             }
-            res
+        }
+    }
+
+    impl<'a> Controller for Joystick<'a> {
+        fn read(&self) -> u8 {
+            if self.strobe.get() {
+                self.reg.set(self.poller.poll());
+                self.reg.get() & 1
+            } else {
+                let old = self.reg.get();
+                self.reg.set(old >> 1);
+                old & 1
+            }
         }
         
         fn write(&self, data: u8) {
             self.strobe.set(data & 1 == 1);
-            self.reg.set(self.back_reg.get());
+            if self.strobe.get() {
+                self.reg.set(self.poller.poll())
+            }
         }
 
         fn load(&mut self, reader: &mut Read) -> bool {
