@@ -2,7 +2,7 @@
 use ppu::PPU;
 use apu::APU;
 use utils::{Sampler, Read, Write, load_prefix, save_prefix};
-use mos6502::{CPU, CPU_FREQ};
+use mos6502::CPU;
 use cartridge::MirrorType;
 use mapper::RefMapper;
 use controller::Controller;
@@ -22,10 +22,6 @@ pub struct CPUBus<'a> {
     cpu_stall: Cell<u32>,
     /*-- end state --*/
 
-    /*-- begin sub-state --*/
-    ppu_sampler: RefCell<Sampler>,
-    /*-- end sub-state --*/
-
     cpu: *mut CPU<'a>,
     ppu: *mut PPU<'a>,
     apu: *mut APU<'a>,
@@ -43,20 +39,17 @@ impl<'a> CPUBus<'a> {
         CPUBus {ppu: null_mut(),
                 cpu: null_mut(),
                 apu: null_mut(),
-                ppu_sampler: RefCell::new(Sampler::new(CPU_FREQ, 60)),
                 nmi_after_tick: Cell::new(false),
                 cpu_stall: Cell::new(0)
             }
     }
 
     pub fn load(&mut self, reader: &mut Read) -> bool {
-        load_prefix(self, CPUBUS_IGNORED_SIZE!(), reader) &&
-        self.ppu_sampler.borrow_mut().load(reader)
+        load_prefix(self, CPUBUS_IGNORED_SIZE!(), reader)
     }
 
     pub fn save(&self, writer: &mut Write) -> bool {
-        save_prefix(self, CPUBUS_IGNORED_SIZE!(), writer) &&
-        self.ppu_sampler.borrow().save(writer)
+        save_prefix(self, CPUBUS_IGNORED_SIZE!(), writer)
     }
 
     pub fn attach(&mut self, cpu: *mut CPU<'a>,
@@ -106,9 +99,6 @@ impl<'a> CPUBus<'a> {
         }
         self.nmi_after_tick.set(nmi_after_tick);
         //println!("tick {} {}", ppu.scanline, ppu.cycle);
-        if self.ppu_sampler.borrow_mut().tick() {
-            ppu.scr.frame()
-        }
     }
 }
 

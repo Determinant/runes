@@ -591,6 +591,7 @@ impl<'a> PPU<'a> {
                 self.early_read = false;
                 self.vblank = true;
                 self.scr.render();
+                self.scr.frame();
                 self.cycle = 2;
                 return self.try_nmi()
             }

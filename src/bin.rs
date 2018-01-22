@@ -45,7 +45,7 @@ const PIX_HEIGHT: u32 = 240;
 const FB_PITCH: usize = PIX_WIDTH as usize * 3;
 const FB_SIZE: usize = PIX_HEIGHT as usize * FB_PITCH;
 const AUDIO_SAMPLES: u16 = 4410;
-const AUDIO_EXTRA_SAMPLES: u16 = 1000;
+const AUDIO_EXTRA_SAMPLES: u16 = AUDIO_SAMPLES;
 const AUDIO_ALL_SAMPLES: u16 = AUDIO_SAMPLES + AUDIO_EXTRA_SAMPLES;
 
 pub struct SimpleCart {
@@ -326,7 +326,7 @@ impl<'a> ppu::Screen for SDLWindow<'a> {
 }
 
 struct CircularBuffer {
-    buffer: [i16; 2 * AUDIO_ALL_SAMPLES as usize],
+    buffer: [i16; (AUDIO_ALL_SAMPLES + 1) as usize],
     head: usize,
     tail: usize
 }
@@ -334,9 +334,9 @@ struct CircularBuffer {
 impl CircularBuffer {
     fn new() -> Self {
         CircularBuffer {
-            buffer: [0; 2 * AUDIO_ALL_SAMPLES as usize],
-            head: 0,
-            tail: AUDIO_ALL_SAMPLES as usize
+            buffer: [0; (AUDIO_ALL_SAMPLES + 1) as usize],
+            head: 1,
+            tail: 0
         }
     }
 
@@ -379,9 +379,10 @@ impl<'a> sdl2::audio::AudioCallback for SDLAudioPlayback<'a> {
         let mut m = self.0.buffer.lock().unwrap();
         {
             let b = &mut m.0;
-            /*let l1 = (b.tail + b.buffer.len() - b.head) % b.buffer.len();
-            print!("{} ", l1); */
-            
+            /*
+            let l1 = (b.tail + b.buffer.len() - b.head) % b.buffer.len();
+            print!("{} ", l1);
+            */
             for x in out.iter_mut() {
                 *x = b.deque()
             }
@@ -391,8 +392,8 @@ impl<'a> sdl2::audio::AudioCallback for SDLAudioPlayback<'a> {
             m.1 -= AUDIO_SAMPLES;
             self.0.time_barrier.notify_one();
         } else {
+            println!("audio frame skipping {}", m.1);
             m.1 = 0;
-            println!("audio frame skipping");
         }
     }
 }
@@ -556,8 +557,7 @@ fn main() {
 
     /* audio */
     let audio_sync = AudioSync { time_barrier: Condvar::new(),
-                                 buffer: Mutex::new((CircularBuffer::new(),
-                                                     AUDIO_ALL_SAMPLES))};
+                                 buffer: Mutex::new((CircularBuffer::new(), AUDIO_ALL_SAMPLES))};
     let mut spkr = SDLAudio(&audio_sync);
     let desired_spec = sdl2::audio::AudioSpecDesired {
         freq: Some(apu::AUDIO_SAMPLE_FREQ as i32),
