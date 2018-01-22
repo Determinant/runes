@@ -10,12 +10,9 @@ use std::cell::{Cell, RefCell};
 extern crate sdl2;
 #[macro_use] extern crate clap;
 
-use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
-use sdl2::rect::Rect;
 use clap::{Arg, App};
 
- mod utils;
+mod utils;
 mod memory;
 #[macro_use] mod mos6502;
 mod ppu;
@@ -48,7 +45,7 @@ const PIX_HEIGHT: u32 = 240;
 const FB_PITCH: usize = PIX_WIDTH as usize * 3;
 const FB_SIZE: usize = PIX_HEIGHT as usize * FB_PITCH;
 const AUDIO_SAMPLES: u16 = 4410;
-const AUDIO_EXTRA_SAMPLES: u16 = 20;
+const AUDIO_EXTRA_SAMPLES: u16 = 1000;
 const AUDIO_ALL_SAMPLES: u16 = AUDIO_SAMPLES + AUDIO_EXTRA_SAMPLES;
 
 pub struct SimpleCart {
@@ -155,46 +152,54 @@ impl utils::Write for FileIO {
     }
 }
 
-
-macro_rules! gen_keymap {
-    ($tab: ident, [$($x: expr, $y: expr), *]) => {
-        {$($tab[($x as usize) & 0xff] = $y;)*}
-    };
-}
-
 struct SDLEventPoller {
     events: RefCell<sdl2::EventPump>,
     p1_button_state: Cell<u8>,
-    keymap: [u8; 256],
-    exit_flag: Cell<bool>
+    exit_flag: Cell<bool>,
+}
+
+fn keyboard_mapping(code: sdl2::keyboard::Keycode) -> u8 {
+    use sdl2::keyboard::Keycode::*;
+    match code {
+        I => stdctl::UP,
+        K => stdctl::DOWN,
+        J => stdctl::LEFT,
+        L => stdctl::RIGHT,
+        Z => stdctl::A,
+        X => stdctl::B,
+        Return => stdctl::START,
+        S => stdctl::SELECT,
+        Up => stdctl::UP,
+        Down => stdctl::DOWN,
+        Left => stdctl::LEFT,
+        Right => stdctl::RIGHT,
+        _ => 0,
+    }
+}
+
+fn joystick_mapping(button: sdl2::controller::Button) -> u8 {
+    use sdl2::controller::Button::*;
+    match button {
+        DPadUp => stdctl::UP,
+        DPadDown => stdctl::DOWN,
+        DPadLeft => stdctl::LEFT,
+        DPadRight => stdctl::RIGHT,
+        A => stdctl::A,
+        B => stdctl::B,
+        X => stdctl::A,
+        Y => stdctl::B,
+        Start => stdctl::START,
+        _ => stdctl::SELECT
+    }
 }
 
 impl SDLEventPoller {
     fn new(_events: sdl2::EventPump) -> Self {
-        let mut res = SDLEventPoller {
+        SDLEventPoller {
             events: RefCell::new(_events),
             p1_button_state: Cell::new(0),
-            exit_flag: Cell::new(false),
-            keymap: [stdctl::NULL; 256]
-        };
-        use Keycode::*;
-        {
-            let keymap = &mut res.keymap;
-            gen_keymap!(keymap, [I, stdctl::UP,
-                                 K, stdctl::DOWN,
-                                 J, stdctl::LEFT,
-                                 L, stdctl::RIGHT,
-                                 Z, stdctl::A,
-                                 X, stdctl::B,
-                                 Return, stdctl::START,
-                                 S, stdctl::SELECT,
-                                 Up, stdctl::UP,
-                                 Down, stdctl::DOWN,
-                                 Left, stdctl::LEFT,
-                                 Right, stdctl::RIGHT
-                                 ]);
+            exit_flag: Cell::new(false)
         }
-        res
     }
 
     #[inline]
@@ -206,20 +211,38 @@ impl SDLEventPoller {
 impl InputPoller for SDLEventPoller {
     #[inline]
     fn poll(&self) -> u8 {
-        use Keycode::*;
-        let keymap = &self.keymap;
+        use sdl2::keyboard::Keycode::Escape;
+        use sdl2::event::Event;
         let mut ns = self.p1_button_state.get();
         for event in self.events.borrow_mut().poll_iter() {
             match event {
                 Event::Quit {..} | Event::KeyDown { keycode: Some(Escape), .. } => {
                     self.exit_flag.set(true)
                 },
-                Event::KeyDown { keycode: Some(c), .. } => {
-                    ns |= keymap[(c as usize) & 0xff]
+                Event::KeyDown { keycode: Some(c), .. } => 
+                    ns |= keyboard_mapping(c),
+                Event::KeyUp { keycode: Some(c), .. } =>
+                    ns &= !keyboard_mapping(c),
+                Event::ControllerButtonDown { button, .. } =>
+                    ns |= joystick_mapping(button),
+                Event::ControllerButtonUp { button, .. } =>
+                    ns &= !joystick_mapping(button),
+                /* TODO: support axis motion
+                Event::ControllerAxisMotion { axis: LeftX, value: val, .. } => {
+                    let threshold = 10_000;
+                        if val > threshold {
+                        println!("{}", val);
+                            ns |= stdctl::RIGHT;
+                            ns &= !stdctl::LEFT;
+                        } else if val < -threshold {
+                        println!("{}", val);
+                            ns |= stdctl::LEFT;
+                            ns &= !stdctl::RIGHT;
+                        } else {
+                            ns &= !(stdctl::RIGHT | stdctl::LEFT);
+                        }
                 },
-                Event::KeyUp { keycode: Some(c), .. } => {
-                    ns &= !keymap[(c as usize) & 0xff]
-                },
+                */
                 _ => ()
             }
         }
@@ -232,7 +255,7 @@ struct SDLWindow<'a> {
     canvas: sdl2::render::WindowCanvas,
     frame_buffer: [u8; FB_SIZE],
     texture: sdl2::render::Texture,
-    copy_area: Option<Rect>,
+    copy_area: Option<sdl2::rect::Rect>,
     event: &'a SDLEventPoller
 }
 
@@ -246,7 +269,7 @@ impl<'a> SDLWindow<'a> {
         let mut copy_area = None;
         if !full_screen {
             actual_height -= 16 * pixel_scale;
-            copy_area = Some(Rect::new(0, 8, PIX_WIDTH, PIX_HEIGHT - 16));
+            copy_area = Some(sdl2::rect::Rect::new(0, 8, PIX_WIDTH, PIX_HEIGHT - 16));
         }
         let window = video_subsystem.window("RuNES", actual_width, actual_height)
                                     .position_centered()
@@ -525,11 +548,13 @@ fn main() {
     println!("read prg {}", file.read(&mut prg_rom[..]).unwrap());
     println!("read chr {}", file.read(&mut chr_rom[..]).unwrap());
 
-    /* SDL setup */
+    /* setup SDL */
     let sdl_context = sdl2::init().unwrap();
-    let event = SDLEventPoller::new(sdl_context.event_pump().unwrap());
+    let controller_subsystem = sdl_context.game_controller().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();
+
+    /* audio */
     let audio_sync = AudioSync { time_barrier: Condvar::new(),
                                  buffer: Mutex::new((CircularBuffer::new(),
                                                      AUDIO_ALL_SAMPLES))};
@@ -542,7 +567,33 @@ fn main() {
     let device = audio_subsystem.open_playback(None, &desired_spec, |_| {
         SDLAudioPlayback(&audio_sync)
     }).unwrap();
-    let mut win = SDLWindow::new(&video_subsystem, &event, /*&p1ctl, */ scale, full);
+
+    /* joysticks */
+    let njoysticks = match controller_subsystem.num_joysticks() {
+        Ok(n)  => n,
+        Err(e) => {
+            println!("can't enumerate joysticks: {}", e);
+            0
+        },
+    };
+    println!("detected {} joysticks", njoysticks);
+    let mut _sdl_joystick = None;
+    for id in 0..njoysticks {
+        if controller_subsystem.is_game_controller(id) {
+            match controller_subsystem.open(id) {
+                Ok(ctl) => {
+                    println!("opened controller {}", ctl.name());
+                    println!("controller mapping: {}", ctl.mapping());
+                    _sdl_joystick = Some(ctl);
+                    break;
+                },
+                Err(e) => println!("failed to open {}: {}", id, e)
+            }
+        }
+    }
+
+    let event = SDLEventPoller::new(sdl_context.event_pump().unwrap());
+    let mut win = SDLWindow::new(&video_subsystem, &event, scale, full);
 
     /* construct mapper from cartridge data */
     let cart = SimpleCart::new(chr_rom, prg_rom, sram, mirror);
@@ -553,15 +604,17 @@ fn main() {
         _ => panic!("unsupported mapper {}", mapper_id)
     };
 
-    /* P1 controller */
+    /* controller for player 1 */
     let p1ctl = stdctl::Joystick::new(&event);
 
+    /* setup the emulated machine */
     let mapper = mapper::RefMapper::new(&mut (*m) as &mut mapper::Mapper);
     let mut cpu = CPU::new(CPUMemory::new(&mapper, Some(&p1ctl), None));
     let mut ppu = PPU::new(PPUMemory::new(&mapper), &mut win);
     let mut apu = APU::new(&mut spkr);
     let cpu_ptr = &mut cpu as *mut CPU;
     cpu.mem.bus.attach(cpu_ptr, &mut ppu, &mut apu);
+
     let load_state = !no_state && match match load_state_name {
         Some(s) => Some(File::open(s).unwrap()),
         None => match File::open(&default_state_name) {
