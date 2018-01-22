@@ -122,7 +122,7 @@ dependencies = [
 
 [[package]]
 name = "runes"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "clap 2.29.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "sdl2 0.31.0 (registry+https://github.com/rust-lang/crates.io-index)",

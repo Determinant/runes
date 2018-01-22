@@ -44,4 +44,15 @@ Build the Example Emulator
 
 ::
 
-    cargo build --examples --release    # (requires std, sdl2 and clap)
+    # for Ubuntu
+    # install Rust toolchain (https://www.rustup.rs/):
+    # $ sudo apt install curl gcc
+    # $ curl https://sh.rustup.rs -sSf | sh
+    # and add $HOME/.cargo/bin to your $PATH
+    # install SDL2 by:
+    # $ sudo apt install libsdl2-dev        # install SDL2 library
+
+    git clone https://github.com/Determinant/runes.git
+    cd runes
+    cargo build --examples --release        # build the binary
+    target/release/examples/runes --help    # see the help message
