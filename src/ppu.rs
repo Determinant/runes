@@ -100,7 +100,8 @@ impl<'a> PPU<'a> {
     #[inline]
     pub fn write_oamdata(&mut self, data: u8) {
         self.reg = data;
-        self.get_oam_raw_mut()[self.oamaddr as usize] = data;
+        let addr = self.oamaddr as usize;
+        self.get_oam_raw_mut()[addr] = data;
         self.oamaddr = self.oamaddr.wrapping_add(1);
     }
 

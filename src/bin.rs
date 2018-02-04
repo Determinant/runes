@@ -44,8 +44,8 @@ const PIX_WIDTH: u32 = 256;
 const PIX_HEIGHT: u32 = 240;
 const FB_PITCH: usize = PIX_WIDTH as usize * 3;
 const FB_SIZE: usize = PIX_HEIGHT as usize * FB_PITCH;
-const AUDIO_SAMPLES: u16 = 4410;
-const AUDIO_EXTRA_SAMPLES: u16 = AUDIO_SAMPLES;
+const AUDIO_SAMPLES: u16 = 441;
+const AUDIO_EXTRA_SAMPLES: u16 = 4410;
 const AUDIO_ALL_SAMPLES: u16 = AUDIO_SAMPLES + AUDIO_EXTRA_SAMPLES;
 
 pub struct SimpleCart {
@@ -219,7 +219,7 @@ impl InputPoller for SDLEventPoller {
                 Event::Quit {..} | Event::KeyDown { keycode: Some(Escape), .. } => {
                     self.exit_flag.set(true)
                 },
-                Event::KeyDown { keycode: Some(c), .. } => 
+                Event::KeyDown { keycode: Some(c), .. } =>
                     ns |= keyboard_mapping(c),
                 Event::KeyUp { keycode: Some(c), .. } =>
                     ns &= !keyboard_mapping(c),
