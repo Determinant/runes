@@ -444,7 +444,7 @@ fn print_cpu_trace(cpu: &CPU) {
 fn main() {
     let matches =
         App::new("RuNES")
-            .version("0.1")
+            .version("0.2")
             .author("Ted Yin <tederminant@gmail.com>")
             .about("A Rust NES emulator")
             .arg(Arg::with_name("scale")
