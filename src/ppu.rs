@@ -97,7 +97,8 @@ impl<'a> PPU<'a> {
     #[inline]
     pub fn write_oamdata(&mut self, data: u8) {
         self.reg = data;
-        self.get_oam_raw_mut()[self.oamaddr as usize] = data;
+        let addr = self.oamaddr as usize;
+        self.get_oam_raw_mut()[addr] = data;
         self.oamaddr = self.oamaddr.wrapping_add(1);
     }
 
@@ -265,7 +266,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn visible_8_1(ppu: &mut PPU) -> bool {
+    fn visible_8_1(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::load_bgtile(ppu);
             PPU::fetch_nametable_byte(ppu);
@@ -274,7 +275,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn visible_8_3(ppu: &mut PPU) -> bool {
+    fn visible_8_3(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::fetch_attrtable_byte(ppu);
             PPU::shift_bgtile(ppu);
@@ -282,7 +283,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn visible_8_5(ppu: &mut PPU) -> bool {
+    fn visible_8_5(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::fetch_low_bgtile_byte(ppu);
             PPU::shift_bgtile(ppu);
@@ -290,7 +291,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn visible_8_7(ppu: &mut PPU) -> bool {
+    fn visible_8_7(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::fetch_high_bgtile_byte(ppu);
             PPU::shift_bgtile(ppu);
@@ -298,7 +299,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn visible_8_0(ppu: &mut PPU) -> bool {
+    fn visible_8_0(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::wrapping_inc_cx(ppu);
             PPU::shift_bgtile(ppu);
@@ -306,7 +307,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn visible_1(ppu: &mut PPU) -> bool {
+    fn visible_1(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::load_bgtile(ppu);
             PPU::fetch_nametable_byte(ppu);
@@ -316,7 +317,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn visible_65(ppu: &mut PPU) -> bool {
+    fn visible_65(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::load_bgtile(ppu);
             PPU::fetch_nametable_byte(ppu);
@@ -326,7 +327,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn visible_256(ppu: &mut PPU) -> bool {
+    fn visible_256(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::wrapping_inc_cx(ppu);
             PPU::wrapping_inc_y(ppu);
@@ -335,7 +336,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn visible_257(ppu: &mut PPU) -> bool {
+    fn visible_257(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::reset_cx(ppu);
             PPU::fetch_sprite(ppu);
@@ -343,7 +344,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn rendering_8_1(ppu: &mut PPU) -> bool {
+    fn rendering_8_1(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::load_bgtile(ppu);
             PPU::fetch_nametable_byte(ppu);
@@ -354,7 +355,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn rendering_8_3(ppu: &mut PPU) -> bool {
+    fn rendering_8_3(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::fetch_attrtable_byte(ppu);
             PPU::render_pixel(ppu);
@@ -364,7 +365,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn rendering_8_5(ppu: &mut PPU) -> bool {
+    fn rendering_8_5(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::fetch_low_bgtile_byte(ppu);
             PPU::render_pixel(ppu);
@@ -374,7 +375,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn rendering_8_7(ppu: &mut PPU) -> bool {
+    fn rendering_8_7(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::fetch_high_bgtile_byte(ppu);
             PPU::render_pixel(ppu);
@@ -384,7 +385,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn rendering_8_0(ppu: &mut PPU) -> bool {
+    fn rendering_8_0(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::wrapping_inc_cx(ppu);
             PPU::render_pixel(ppu);
@@ -394,7 +395,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn rendering_1(ppu: &mut PPU) -> bool {
+    fn rendering_1(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::load_bgtile(ppu);
             PPU::fetch_nametable_byte(ppu);
@@ -406,7 +407,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn rendering_65(ppu: &mut PPU) -> bool {
+    fn rendering_65(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::load_bgtile(ppu);
             PPU::fetch_nametable_byte(ppu);
@@ -418,7 +419,7 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn rendering_256(ppu: &mut PPU) -> bool {
+    fn rendering_256(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::wrapping_inc_cx(ppu);
             PPU::wrapping_inc_y(ppu);
@@ -429,14 +430,14 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn visible_8_other(ppu: &mut PPU) -> bool{
+    fn visible_8_other(ppu: &mut PPU<'a>) -> bool{
         if ppu.rendering {
             PPU::shift_bgtile(ppu)
         }
         false
     }
 
-    fn rendering_8_other(ppu: &mut PPU) -> bool {
+    fn rendering_8_other(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::render_pixel(ppu);
             PPU::shift_sprites(ppu);
@@ -445,14 +446,14 @@ impl<'a> PPU<'a> {
         false
     }
 
-    fn skip_cycle(ppu: &mut PPU) -> bool {
+    fn skip_cycle(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering && ppu.f {
             ppu.cycle += 1;
         }
         false
     }
 
-    fn vblank_cycle(ppu: &mut PPU) -> bool {
+    fn vblank_cycle(ppu: &mut PPU<'a>) -> bool {
         if !ppu.early_read {
             ppu.ppustatus |= PPU::FLAG_VBLANK
         }
@@ -464,7 +465,7 @@ impl<'a> PPU<'a> {
         ppu.try_nmi()
     }
 
-    fn vblank_clear_cycle(ppu: &mut PPU) -> bool {
+    fn vblank_clear_cycle(ppu: &mut PPU<'a>) -> bool {
         /* clear vblank, sprite zero hit & overflow */
         ppu.vblank = false;
         ppu.ppustatus &= !(PPU::FLAG_VBLANK |
@@ -485,7 +486,7 @@ impl<'a> PPU<'a> {
     }
 
     #[inline(always)]
-    fn shift_sprites(ppu: &mut PPU) {
+    fn shift_sprites(ppu: &mut PPU<'a>) {
         for (i, c) in ppu.sp_cnt.iter_mut().enumerate() {
             if ppu.sp_idx[i] > 0xff { break }
             let c0 = *c;
@@ -502,7 +503,7 @@ impl<'a> PPU<'a> {
     }
 
     #[inline(always)]
-    fn wrapping_inc_cx(ppu: &mut PPU) {
+    fn wrapping_inc_cx(ppu: &mut PPU<'a>) {
         match ppu.v & 0x001f {
             31 => {
                 ppu.v &= !0x001fu16; /* reset coarse x */
@@ -513,7 +514,7 @@ impl<'a> PPU<'a> {
     }
 
     #[inline(always)]
-    fn wrapping_inc_y(ppu: &mut PPU) {
+    fn wrapping_inc_y(ppu: &mut PPU<'a>) {
         match (ppu.v & 0x7000) == 0x7000 {
             false => ppu.v += 0x1000, /* fine y < 7 */
             true => {
@@ -534,11 +535,11 @@ impl<'a> PPU<'a> {
     }
 
     #[inline(always)]
-    fn reset_y(ppu: &mut PPU) {
+    fn reset_y(ppu: &mut PPU<'a>) {
         ppu.v = (ppu.v & !0x7be0u16) | (ppu.t & 0x7be0)
     }
 
-    fn reset_y_cycle(ppu: &mut PPU) -> bool {
+    fn reset_y_cycle(ppu: &mut PPU<'a>) -> bool {
         if ppu.rendering {
             PPU::reset_y(ppu)
         }
@@ -546,13 +547,13 @@ impl<'a> PPU<'a> {
     }
 
     #[inline(always)]
-    fn clear_sprite(ppu: &mut PPU) {
+    fn clear_sprite(ppu: &mut PPU<'a>) {
         debug_assert!(ppu.scanline != 261);
         ppu.oam2 = [0x100; 8];
     }
 
     #[inline(always)]
-    fn eval_sprite(ppu: &mut PPU) {
+    fn eval_sprite(ppu: &mut PPU<'a>) {
         debug_assert!(ppu.scanline != 261);
         /* we use scanline here because s.y is the (actual y) - 1 */
         let mut nidx = 0;
