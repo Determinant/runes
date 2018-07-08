@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use ppu::PPU;
 use apu::APU;
-use utils::{Sampler, Read, Write, load_prefix, save_prefix};
+use utils::{Read, Write, load_prefix, save_prefix};
 use mos6502::CPU;
 use cartridge::MirrorType;
 use mapper::RefMapper;
@@ -28,8 +28,7 @@ pub struct CPUBus<'a> {
 }
 
 macro_rules! CPUBUS_IGNORED_SIZE {
-    () => (size_of::<RefCell<Sampler>>() +
-            size_of::<*mut CPU>() +
+    () => (size_of::<*mut CPU>() +
             size_of::<*mut PPU>() +
             size_of::<*mut APU>())
 }
