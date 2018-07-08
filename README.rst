@@ -42,6 +42,9 @@ Guidelines
 Build the Example Emulator
 ==========================
 
+GNU/Linux
+---------
+
 ::
 
     # for Ubuntu
@@ -56,3 +59,20 @@ Build the Example Emulator
     cd runes
     cargo build --examples --release        # build the binary
     target/release/examples/runes --help    # see the help message
+    
+Mac OS X
+--------
+
+::
+
+    # install homebrew
+    /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+    # install Xcode command line tools
+    xcode-select --install
+    # install SDL2
+    brew install sdl2
+    # rust up
+    curl https://sh.rustup.rs -sSf | sh
+    # build RuNES and enjoy
+    git clone https://github.com/Determinant/runes.git
+    cargo build --examples --release
