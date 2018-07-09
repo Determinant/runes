@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 use memory::{VMem, PPUMemory, CPUBus};
-use core::mem::{size_of, transmute};
 use utils::{Read, Write, load_prefix, save_prefix};
+use core::mem::{size_of, transmute};
+use core::cmp::min;
 
 pub trait Screen {
     fn put(&mut self, x: u8, y: u8, color: u8);
@@ -44,10 +45,8 @@ pub struct PPU<'a> {
     bg_bit_high: u8,
     /* sprites */
     oam: [Sprite; 64],
-    oam2: [usize; 8],
-    sp_pixel: [u32; 8],
-    sp_idx: [usize; 8],
-    sp_cnt: [u8; 8],
+    oam2: [u8; 8],
+    sp_cache: [u16; 256], /* pre-computed sp value */
     vblank: bool,
     pub vblank_lines: bool,
     buffered_read: u8,
@@ -266,18 +265,6 @@ impl<'a> PPU<'a> {
     }
 
     #[inline(always)]
-    fn shift_sprites(&mut self) {
-        for (i, c) in self.sp_cnt.iter_mut().enumerate() {
-            if self.sp_idx[i] > 0xff { break }
-            let c0 = *c;
-            match c0 {
-                0 => self.sp_pixel[i] >>= 4,
-                _ => *c = c0 - 1
-            }
-        }
-    }
-
-    #[inline(always)]
     fn shift_bgtile(&mut self) {
         self.bg_pixel >>= 4;
     }
@@ -322,7 +309,7 @@ impl<'a> PPU<'a> {
     #[inline(always)]
     fn clear_sprite(&mut self) {
         debug_assert!(self.scanline != 261);
-        self.oam2 = [0x100; 8];
+        self.oam2 = [0xff; 8];
     }
 
     fn eval_sprite(&mut self) {
@@ -338,7 +325,7 @@ impl<'a> PPU<'a> {
         for (i, s) in self.oam.iter().enumerate() {
             let y = s.y as u16;
             if y <= scanline && scanline < y + h {
-                self.oam2[nidx] = i;
+                self.oam2[nidx] = i as u8;
                 nidx += 1;
                 if nidx == 8 {
                     n = i + 1;
@@ -376,11 +363,10 @@ impl<'a> PPU<'a> {
     fn fetch_sprite(&mut self) {
         if self.scanline == 261 { return }
         /* we use scanline here because s.y is the (actual y) - 1 */
-        self.sp_idx = [0x100; 8];
-        for (i, v) in self.oam2.iter().enumerate() {
-            let j = *v;
-            if j > 0xff { break }
-            let s = &self.oam[j];
+        self.sp_cache = [0xffff; 256];
+        for &j in self.oam2.iter() {
+            if j == 0xff { break }
+            let s = &self.oam[j as usize];
             let vflip = (s.attr & 0x80) == 0x80;
             let y0 = self.scanline - s.y as u16;
             let (ptable, tidx, y) = match self.get_spritesize() {
@@ -395,8 +381,6 @@ impl<'a> PPU<'a> {
                      y & 0x7)
                 }
             };
-            self.sp_idx[i] = j;
-            self.sp_cnt[i] = s.x;
             let mut low = self.mem.read_mapper(ptable | ((tidx as u16) << 4) | 0x0 | y as u16);
             let mut high = self.mem.read_mapper(ptable | ((tidx as u16) << 4) | 0x8 | y as u16);
             if (s.attr & 0x40) == 0x40 {
@@ -404,46 +388,44 @@ impl<'a> PPU<'a> {
                 high = PPU::reverse_byte(high);
             }
             let attr = s.attr & 3;
-            let mut t = 0u32;
-            for _ in 0..8 {
-                t = (t << 4) | ((attr << 2) | ((high & 1) << 1) | (low & 1)) as u32;
+            let x_max = min(s.x as usize + 8, 256);
+            /* pre-compute sprite pixels */
+            for p in (&mut self.sp_cache[s.x as usize .. x_max]).iter_mut().rev() {
+                if *p == 0xffff {
+                    let sp = ((attr << 2) | ((high & 1) << 1) | (low & 1)) as u16;
+                    if sp & 3 != 0x0 {
+                        *p = ((if j == 0 {1} else {0}) << 15) | /* if zero sprite */
+                             (((s.attr >> 5) as u16 & 1) << 8) | /* priority flag */
+                             sp;
+                    }
+                }
                 high >>= 1;
                 low >>= 1;
             }
-            self.sp_pixel[i] = t;
         }
     }
 
     fn render_pixel(&mut self) {
         let x = self.cycle - 1;
-        let bg = ((self.bg_pixel >> (self.x << 2)) & 0xf) as u16;
-        let bg_pidx =
-            if x >= 8 || self.get_show_leftmost_bg() {
-                if self.get_show_bg() {bg & 3} else {0}
-            } else {0};
-        let mut sp_pidx = 0x0;
+        let show_bg = self.get_show_bg();
+        let show_sp = self.get_show_sp();
+
+        let bg = if show_bg && (x >= 8 || self.get_show_leftmost_bg())
+                    {(self.bg_pixel >> (self.x << 2)) & 0xf} else {0} as u16;
+        let bg_pidx = bg & 3;
         let mut pri = 0x1;
         let mut sp = 0;
-        let show_sp = self.get_show_sp();
-        if x >= 8 || self.get_show_leftmost_sp() {
-            for i in 0..8 {
-                if self.sp_idx[i] > 0xff { break }
-                if self.sp_cnt[i] != 0 { continue; } /* not active */
-                let s = &self.oam[self.sp_idx[i]];
-                sp = if show_sp {(self.sp_pixel[i] & 0xf) as u16} else { 0 };
-                match sp & 3 {
-                    0x0 => (),
-                    pidx => {
-                        if bg_pidx != 0 && self.sp_idx[i] == 0 &&
-                           x != 0xff && s.y != 0xff {
-                            self.ppustatus |= PPU::FLAG_SPRITE_ZERO; /* set sprite zero hit */
-                        }
-                        sp_pidx = pidx;
-                        pri = (s.attr >> 5) & 1;
-                        break;
-                    }
+        let mut sp_pidx = 0x0;
+        if show_sp && (x >= 8 || self.get_show_leftmost_sp()) {
+            let p = self.sp_cache[x as usize];
+            if p != 0xffff {
+                if (p >> 15 == 1) && bg_pidx != 0 && x != 0xff {
+                    self.ppustatus |= PPU::FLAG_SPRITE_ZERO; /* set sprite zero hit */
                 }
-            }
+                pri = (p >> 8) & 1;
+                sp = p & 0x00ff;
+                sp_pidx = sp & 3;
+           }
         }
         debug_assert!(0 < self.cycle && self.cycle < 257);
         debug_assert!(self.scanline < 240);
@@ -479,10 +461,8 @@ impl<'a> PPU<'a> {
             bg_nt: 0, bg_attr: 0,
             bg_bit_low: 0, bg_bit_high: 0,
             oam: [Sprite{y: 0, tile: 0, attr: 0, x: 0}; 64],
-            oam2: [0x100; 8],
-            sp_idx: [0x100; 8],
-            sp_pixel: [0; 8],
-            sp_cnt: [0; 8],
+            oam2: [0xff; 8],
+            sp_cache: [0xffff; 256],
             vblank: false,
             vblank_lines: true,
             buffered_read,
@@ -564,7 +544,6 @@ impl<'a> PPU<'a> {
                     }
                     if visible_cycle {
                         self.render_pixel();
-                        self.shift_sprites();
                     }
                     self.shift_bgtile();
                 } else if cycle == 257 {

@@ -6,7 +6,7 @@ use mos6502::CPU;
 use cartridge::MirrorType;
 use mapper::RefMapper;
 use controller::Controller;
-use core::cell::{RefCell, Cell};
+use core::cell::Cell;
 use core::ptr::null_mut;
 use core::mem::size_of;
 
