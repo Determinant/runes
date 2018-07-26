@@ -45,7 +45,7 @@ Build the Example Emulator
 GNU/Linux
 ---------
 
-::
+.. code-block:: sh
 
     # for Ubuntu
     # install Rust toolchain (https://www.rustup.rs/):
@@ -63,7 +63,7 @@ GNU/Linux
 Mac OS X
 --------
 
-::
+.. code-block:: sh
 
     # install homebrew
     /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
