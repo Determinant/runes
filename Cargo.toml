@@ -1,6 +1,6 @@
 [package]
 name = "runes"
-version = "0.2.3"
+version = "0.2.4"
 authors = ["Determinant <tederminant@gmail.com>"]
 description = "No-std NES emulator library and minimal emulator written purely in Rust."
 repository = "https://github.com/Determinant/runes"

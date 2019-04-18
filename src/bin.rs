@@ -392,7 +392,7 @@ impl<'a> sdl2::audio::AudioCallback for SDLAudioPlayback<'a> {
             m.1 -= AUDIO_SAMPLES;
             self.0.time_barrier.notify_one();
         } else {
-            println!("audio frame skipping {}", m.1);
+            //println!("audio frame skipping {}", m.1);
             m.1 = 0;
         }
     }
