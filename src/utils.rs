@@ -1,5 +1,5 @@
-use core::mem::{transmute, size_of};
-use core::slice::{from_raw_parts_mut, from_raw_parts};
+use core::mem::{size_of, transmute};
+use core::slice::{from_raw_parts, from_raw_parts_mut};
 
 pub struct Sampler {
     freq2: u32,
@@ -7,7 +7,7 @@ pub struct Sampler {
     r0: u32,
     ddl: (u32, u32),
     cnt: u32,
-    sec_cnt: u32
+    sec_cnt: u32,
 }
 
 impl Sampler {
@@ -20,15 +20,15 @@ impl Sampler {
             r0,
             ddl: (q0, r0),
             cnt: 0,
-            sec_cnt: 0
+            sec_cnt: 0,
         }
     }
 
-    pub fn load(&mut self, reader: &mut Read) -> bool {
+    pub fn load(&mut self, reader: &mut dyn Read) -> bool {
         load_prefix(self, 0, reader)
     }
 
-    pub fn save(&self, writer: &mut Write) -> bool {
+    pub fn save(&self, writer: &mut dyn Write) -> bool {
         save_prefix(self, 0, writer)
     }
 
@@ -62,26 +62,26 @@ pub trait Write {
     fn write(&mut self, buf: &[u8]) -> Option<usize>;
 }
 
-pub fn load_prefix<T>(obj: &mut T, ignored: usize, reader: &mut Read) -> bool {
+pub fn load_prefix<T>(
+    obj: &mut T,
+    ignored: usize,
+    reader: &mut dyn Read,
+) -> bool {
     let len = size_of::<T>() - ignored;
     match reader.read(unsafe {
-        from_raw_parts_mut(
-            transmute::<*mut T, *mut u8>(obj as *mut T),
-            len
-    )}) {
+        from_raw_parts_mut(transmute::<*mut T, *mut u8>(obj as *mut T), len)
+    }) {
         Some(x) => x == len,
-        None => false
+        None => false,
     }
 }
 
-pub fn save_prefix<T>(obj: &T, ignored: usize, writer: &mut Write) -> bool {
+pub fn save_prefix<T>(obj: &T, ignored: usize, writer: &mut dyn Write) -> bool {
     let len = size_of::<T>() - ignored;
     match writer.write(unsafe {
-        from_raw_parts(
-            transmute::<*const T, *const u8>(obj as *const T),
-            len
-            )}) {
+        from_raw_parts(transmute::<*const T, *const u8>(obj as *const T), len)
+    }) {
         Some(x) => x == len,
-        None => false
+        None => false,
     }
 }

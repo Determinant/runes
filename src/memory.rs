@@ -1,14 +1,14 @@
-#![allow(dead_code)]
-use ppu::PPU;
-use apu::APU;
-use utils::{Read, Write, load_prefix, save_prefix};
-use mos6502::CPU;
-use cartridge::MirrorType;
-use mapper::RefMapper;
-use controller::Controller;
 use core::cell::Cell;
-use core::ptr::null_mut;
 use core::mem::size_of;
+use core::ptr::null_mut;
+
+use crate::apu::APU;
+use crate::cartridge::MirrorType;
+use crate::controller::Controller;
+use crate::mapper::RefMapper;
+use crate::mos6502::CPU;
+use crate::ppu::PPU;
+use crate::utils::{load_prefix, save_prefix, Read, Write};
 
 pub trait VMem {
     fn read(&self, addr: u16) -> u8;
@@ -21,47 +21,59 @@ pub struct CPUBus<'a> {
     nmi_after_tick: Cell<bool>,
     cpu_stall: Cell<u32>,
     /*-- end state --*/
-
     cpu: *mut CPU<'a>,
     ppu: *mut PPU<'a>,
     apu: *mut APU<'a>,
 }
 
 macro_rules! CPUBUS_IGNORED_SIZE {
-    () => (size_of::<*mut CPU>() +
-            size_of::<*mut PPU>() +
-            size_of::<*mut APU>())
+    () => {
+        size_of::<*mut CPU>() + size_of::<*mut PPU>() + size_of::<*mut APU>()
+    };
 }
 
 impl<'a> CPUBus<'a> {
     pub fn new() -> Self {
-        CPUBus {ppu: null_mut(),
-                cpu: null_mut(),
-                apu: null_mut(),
-                nmi_after_tick: Cell::new(false),
-                cpu_stall: Cell::new(0)
-            }
+        CPUBus {
+            ppu: null_mut(),
+            cpu: null_mut(),
+            apu: null_mut(),
+            nmi_after_tick: Cell::new(false),
+            cpu_stall: Cell::new(0),
+        }
     }
 
-    pub fn load(&mut self, reader: &mut Read) -> bool {
+    pub fn load(&mut self, reader: &mut dyn Read) -> bool {
         load_prefix(self, CPUBUS_IGNORED_SIZE!(), reader)
     }
 
-    pub fn save(&self, writer: &mut Write) -> bool {
+    pub fn save(&self, writer: &mut dyn Write) -> bool {
         save_prefix(self, CPUBUS_IGNORED_SIZE!(), writer)
     }
 
-    pub fn attach(&mut self, cpu: *mut CPU<'a>,
-                             ppu: *mut PPU<'a>,
-                             apu: *mut APU<'a>) {
+    pub fn attach(
+        &mut self,
+        cpu: *mut CPU<'a>,
+        ppu: *mut PPU<'a>,
+        apu: *mut APU<'a>,
+    ) {
         self.ppu = ppu;
         self.cpu = cpu;
         self.apu = apu;
     }
 
-    #[inline(always)] pub fn get_cpu(&self) -> &'a mut CPU<'a> {unsafe{&mut *self.cpu}}
-    #[inline(always)] pub fn get_ppu(&self) -> &'a mut PPU<'a> {unsafe{&mut *self.ppu}}
-    #[inline(always)] pub fn get_apu(&self) -> &'a mut APU<'a> {unsafe{&mut *self.apu}}
+    #[inline(always)]
+    pub fn get_cpu(&self) -> &'a mut CPU<'a> {
+        unsafe { &mut *self.cpu }
+    }
+    #[inline(always)]
+    pub fn get_ppu(&self) -> &'a mut PPU<'a> {
+        unsafe { &mut *self.ppu }
+    }
+    #[inline(always)]
+    pub fn get_apu(&self) -> &'a mut APU<'a> {
+        unsafe { &mut *self.apu }
+    }
 
     pub fn cpu_stall(&self, delta: u32) {
         self.cpu_stall.set(self.cpu_stall.get() + delta)
@@ -110,36 +122,43 @@ pub struct CPUMemory<'a> {
     /*-- begin sub-state --*/
     pub bus: CPUBus<'a>,
     /*-- end sub-state --*/
-
     mapper: &'a RefMapper<'a>,
-    ctl1: Option<&'a Controller>,
-    ctl2: Option<&'a Controller>
+    ctl1: Option<&'a dyn Controller>,
+    ctl2: Option<&'a dyn Controller>,
 }
 
 macro_rules! CPUMEM_IGNORED_SIZE {
-    () => (size_of::<CPUBus>() +
+    () => {
+        size_of::<CPUBus>() +
             size_of::<&RefMapper>() +
-            size_of::<Option<&Controller>>() +
-            size_of::<Option<&Controller>>())
+            size_of::<Option<&dyn Controller>>() +
+            size_of::<Option<&dyn Controller>>()
+    };
 }
 
 impl<'a> CPUMemory<'a> {
-    pub fn new(mapper: &'a RefMapper<'a>,
-               ctl1: Option<&'a Controller>,
-               ctl2: Option<&'a Controller>) -> Self {
-        CPUMemory{sram: [0; 2048],
-                  bus: CPUBus::new(),
-                  mapper, ctl1, ctl2}
+    pub fn new(
+        mapper: &'a RefMapper<'a>,
+        ctl1: Option<&'a dyn Controller>,
+        ctl2: Option<&'a dyn Controller>,
+    ) -> Self {
+        CPUMemory {
+            sram: [0; 2048],
+            bus: CPUBus::new(),
+            mapper,
+            ctl1,
+            ctl2,
+        }
     }
 
-    pub fn load(&mut self, reader: &mut Read) -> bool {
+    pub fn load(&mut self, reader: &mut dyn Read) -> bool {
         load_prefix(self, CPUMEM_IGNORED_SIZE!(), reader) &&
-        self.bus.load(reader)
+            self.bus.load(reader)
     }
 
-    pub fn save(&self, writer: &mut Write) -> bool {
+    pub fn save(&self, writer: &mut dyn Write) -> bool {
         save_prefix(self, CPUMEM_IGNORED_SIZE!(), writer) &&
-        self.bus.save(writer)
+            self.bus.save(writer)
     }
 
     pub fn get_bus(&'a self) -> &'a CPUBus<'a> {
@@ -161,26 +180,38 @@ impl<'a> CPUMemory<'a> {
                             cpu.suppress_nmi()
                         } /* race condition when status is read near vbl/nmi */
                         ppu.read_status()
-                    },
+                    }
                     0x4 => ppu.read_oamdata(),
                     0x7 => ppu.read_data(),
-                    _ => 0
+                    _ => 0,
                 }
-            },
+            }
             /* [0x4000..0x5000) */
             4 => {
                 let apu = self.bus.get_apu();
                 match addr {
                     0x4015 => apu.read_status(),
-                    0x4016 => if let Some(c) = self.ctl1 { c.read() } else { 0 },
-                    0x4017 => if let Some(c) = self.ctl2 { c.read() } else { 0 },
-                    _ => 0
+                    0x4016 => {
+                        if let Some(c) = self.ctl1 {
+                            c.read()
+                        } else {
+                            0
+                        }
+                    }
+                    0x4017 => {
+                        if let Some(c) = self.ctl2 {
+                            c.read()
+                        } else {
+                            0
+                        }
+                    }
+                    _ => 0,
                 }
-            },
+            }
             /* [0x5000..0x6000) */
             5 => 0,
             /* [0x6000..0xffff) */
-            _ => self.mapper.read(addr)
+            _ => self.mapper.read(addr),
         }
     }
 
@@ -202,7 +233,7 @@ impl<'a> CPUMemory<'a> {
                     if !old && ppu.try_nmi() && ppu.vblank_lines {
                         cpu.trigger_delayed_nmi()
                     } /* toggle NMI flag can generate multiple ints */
-                },
+                }
                 0x1 => ppu.write_mask(data),
                 0x2 => (),
                 0x3 => ppu.write_oamaddr(data),
@@ -237,16 +268,20 @@ impl<'a> CPUMemory<'a> {
                     0x4017 => apu.write_frame_counter(data),
                     0x4014 => ppu.write_oamdma(data, &self.bus),
                     0x4016 => {
-                        if let Some(c) = self.ctl1 { c.write(data) }
-                        if let Some(c) = self.ctl2 { c.write(data) }
+                        if let Some(c) = self.ctl1 {
+                            c.write(data)
+                        }
+                        if let Some(c) = self.ctl2 {
+                            c.write(data)
+                        }
                     }
-                    _ => ()
+                    _ => (),
                 }
-            },
+            }
             /* [0x5000..0x6000) */
             5 => (),
             /* [0x6000..0xffff) */
-            _ => self.mapper.get_mut().write(addr, data)
+            _ => self.mapper.get_mut().write(addr, data),
         }
     }
 }
@@ -269,28 +304,29 @@ pub struct PPUMemory<'a> {
     nametable: [u8; 0x800],
     palette: [u8; 0x20],
     /*-- end state --*/
-
-    mapper: &'a RefMapper<'a>
+    mapper: &'a RefMapper<'a>,
 }
 
 macro_rules! PPUMEM_IGNORED_SIZE {
-    () => (size_of::<&RefMapper>())
+    () => {
+        size_of::<&RefMapper>()
+    };
 }
 
 impl<'a> PPUMemory<'a> {
     pub fn new(mapper: &'a RefMapper<'a>) -> Self {
-        PPUMemory{
+        PPUMemory {
             nametable: [0; 0x800],
             palette: [0; 0x20],
-            mapper
+            mapper,
         }
     }
 
-    pub fn load(&mut self, reader: &mut Read) -> bool {
+    pub fn load(&mut self, reader: &mut dyn Read) -> bool {
         load_prefix(self, PPUMEM_IGNORED_SIZE!(), reader)
     }
 
-    pub fn save(&self, writer: &mut Write) -> bool {
+    pub fn save(&self, writer: &mut dyn Write) -> bool {
         save_prefix(self, PPUMEM_IGNORED_SIZE!(), writer)
     }
 }
@@ -314,7 +350,9 @@ fn get_mirror_addr(kind: MirrorType, addr: u16) -> u16 {
 fn get_mirror_palette(addr: u16) -> u16 {
     if addr >= 0x10 && addr & 3 == 0 {
         addr - 0x10
-    } else { addr }
+    } else {
+        addr
+    }
 }
 
 impl<'a> PPUMemory<'a> {
@@ -367,7 +405,7 @@ impl<'a> VMem for PPUMemory<'a> {
             /* [0x3000..0x4000) */
             _ => match addr >> 8 {
                 0x3f => self.read_palette((addr - 0x3f00) & 0x1f),
-                _ => self.read_nametable((addr - 0x2000) & 0xfff)
+                _ => self.read_nametable((addr - 0x2000) & 0xfff),
             },
         }
     }
@@ -382,7 +420,7 @@ impl<'a> VMem for PPUMemory<'a> {
             /* [0x3000..0x4000) */
             _ => match addr >> 8 {
                 0x3f => self.write_palette((addr - 0x3f00) & 0x1f, data),
-                _ => self.write_nametable((addr - 0x2000) & 0xfff, data)
+                _ => self.write_nametable((addr - 0x2000) & 0xfff, data),
             },
         }
     }
